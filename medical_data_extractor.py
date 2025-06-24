@@ -6,7 +6,7 @@ from PySide6.QtCore import Slot, Qt
 from PySide6.QtGui import QIcon
 
 from db_profiles.mimic_iv.profile import MIMICIVProfile
-# from db_profiles.eicu.profile import EICUProfile # Future extension example
+from db_profiles.eicu.profile import EICUProfile 
 
 from tabs.tab_connection import ConnectionTab
 from tabs.tab_structure import StructureTab
@@ -34,7 +34,7 @@ class MedicalDataExtractor(QMainWindow):
         # REFACTOR: Profile management
         self.db_profiles = {
             "MIMIC-IV": MIMICIVProfile,
-            # "e-ICU": EICUProfile, # Future extension
+            "e-ICU": EICUProfile,
         }
         self.active_db_profile = None
 
