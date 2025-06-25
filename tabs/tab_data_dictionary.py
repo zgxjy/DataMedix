@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QScrollArea,QGroupBox, QTextEdit, QProgressBar) 
 from PySide6.QtCore import Qt, Slot
 import psycopg2
-import psycopg2.sql as pgsql 
+import psycopg2.sql as psql 
 import traceback
 from typing import Optional
 

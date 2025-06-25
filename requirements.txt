@@ -5,3 +5,4 @@ openpyxl
 re
 sqlalchemy 
 numpy
+chardet
