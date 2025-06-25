@@ -39,6 +39,7 @@ def build_special_data_sql(
     id_col_in_event_table = panel_specific_config.get("item_id_column_in_event_table")
     value_column_name_from_panel = panel_specific_config.get("value_column_to_extract") 
     time_col_for_window = panel_specific_config.get("time_column_in_event_table")
+    time_col_is_date = panel_specific_config.get("time_column_is_date_only", False) # 修改：新增此行
     selected_item_ids = panel_specific_config.get("selected_item_ids", [])
     aggregation_methods: Optional[Dict[str, bool]] = panel_specific_config.get("aggregation_methods", {})
     event_outputs: Optional[Dict[str, bool]] = panel_specific_config.get("event_outputs", {})
@@ -78,12 +79,24 @@ def build_special_data_sql(
 
     if id_col_in_event_table and selected_item_ids:
         event_table_item_id_col_ident = psql.Identifier(id_col_in_event_table)
-        if len(selected_item_ids) == 1:
-            item_id_filter_on_event_table_parts.append(psql.SQL("{}.{} = %s").format(event_alias, event_table_item_id_col_ident))
-            params_for_cte.append(selected_item_ids[0])
-        elif len(selected_item_ids) > 1:
-            item_id_filter_on_event_table_parts.append(psql.SQL("{}.{} IN %s").format(event_alias, event_table_item_id_col_ident))
-            params_for_cte.append(tuple(selected_item_ids))
+        
+        # 核心修改：判断是否使用ILIKE
+        use_ilike = any('%' in str(s) for s in selected_item_ids)
+
+        if use_ilike:
+            # 如果ID中包含%，则构建多个ILIKE条件
+            ilike_parts = [psql.SQL("TRIM({}.{}) ILIKE %s").format(event_alias, event_table_item_id_col_ident) for _ in selected_item_ids]
+            item_id_filter_on_event_table_parts.append(psql.SQL("({})").format(psql.SQL(" OR ").join(ilike_parts)))
+            params_for_cte.extend(selected_item_ids)
+        else:
+            # 否则，使用常规的 = 或 IN
+            trimmed_col_expr = psql.SQL("TRIM({}.{})").format(event_alias, event_table_item_id_col_ident)
+            if len(selected_item_ids) == 1:
+                item_id_filter_on_event_table_parts.append(psql.SQL("{} = %s").format(trimmed_col_expr))
+                params_for_cte.append(selected_item_ids[0])
+            elif len(selected_item_ids) > 1:
+                item_id_filter_on_event_table_parts.append(psql.SQL("{} IN %s").format(trimmed_col_expr))
+                params_for_cte.append(tuple(selected_item_ids))
     
     cohort_join_key = "hadm_id"
     event_join_key = "hadm_id"
@@ -120,7 +133,19 @@ def build_special_data_sql(
         if "24小时" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '24 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
         elif "48小时" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '48 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
         elif "整个ICU期间" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime, end_ts=cohort_icu_outtime))
-        elif "整个住院期间" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_admittime, end_ts=cohort_dischtime))
+        # 修改：start
+        elif "整个住院期间" in current_time_window_text:
+            start_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_admittime) if time_col_is_date else cohort_admittime
+            end_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_dischtime) if time_col_is_date else cohort_dischtime
+            time_filter_conditions_sql_parts.append(
+                psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(
+                    evt=event_alias, 
+                    time_col=actual_event_time_col_ident, 
+                    start_ts=start_ts_expr, 
+                    end_ts=end_ts_expr
+                )
+            )
+        # 修改：end
         elif "住院以前" in current_time_window_text:
             if not cte_join_override: return None, f"“住院以前”需要JOIN覆盖逻辑。", [], []
             time_filter_conditions_sql_parts.append(psql.SQL("{adm_evt}.admittime < {compare_ts}").format(adm_evt=event_admission_alias, compare_ts=cohort_admittime))
@@ -193,7 +218,6 @@ def build_special_data_sql(
             sql_template_str, regex_params = agg_template_or_tuple
             safe_pattern_literal = psql.Literal(regex_params[0])
             sql_expr = psql.SQL(sql_template_str).format(val_col=psql.Identifier('event_value'))
-            # This is tricky. Let's embed the pattern for now, assuming it's safe.
             sql_expr = psql.SQL(sql_template_str.replace('%s', str(safe_pattern_literal))).format(val_col=psql.Identifier('event_value'))
 
         else: # Standard aggregation

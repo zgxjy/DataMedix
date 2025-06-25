@@ -125,6 +125,7 @@ class ProcedureConfigPanel(BaseSourceConfigPanel):
             "selected_item_ids": selected_ids,
             "value_column_to_extract": None, 
             "time_column_in_event_table": event_time_column,
+            "time_column_is_date_only": True, # 新增：告知SQL构建器这是一个DATE类型的列
             "aggregation_methods": {},
             "event_outputs": current_event_outputs,
             "time_window_text": current_time_window,

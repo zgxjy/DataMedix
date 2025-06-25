@@ -54,28 +54,24 @@ class MergeSQLWorker(QObject):
             self.log.emit("数据库已连接。")
             for i, (sql_obj_or_str, params_for_step) in enumerate(self.execution_steps):
                 current_step_num += 1
-                step_description = f"执行数据库步骤 {current_step_num}/{total_actual_steps}"
-                sql_str_for_log_peek = ""
-                self.current_sql_for_debug = ""
+                step_description_short = ""
                 
-                if isinstance(sql_obj_or_str, (pgsql.Composed, pgsql.SQL)):
-                    try: 
-                        self.current_sql_for_debug = sql_obj_or_str.as_string(cur)
-                        sql_str_for_log_peek = self.current_sql_for_debug[:200].split('\n')[0]
-                    except Exception as e_as_string: 
-                        self.log.emit(f"DEBUG: Error getting SQL as_string: {e_as_string}")
-                        sql_str_for_log_peek = str(sql_obj_or_str)[:100].split('\n')[0]
-                        self.current_sql_for_debug = str(sql_obj_or_str)
-                else: 
-                    self.current_sql_for_debug = sql_obj_or_str
-                    sql_str_for_log_peek = sql_obj_or_str[:100].split('\n')[0]
+                try: 
+                    self.current_sql_for_debug = cur.mogrify(sql_obj_or_str, params_for_step if params_for_step else None).decode(conn_merge.encoding or 'utf-8', 'replace')
+                except Exception as e_mogrify:
+                    self.log.emit(f"DEBUG: Error mogrifying SQL: {e_mogrify}")
+                    self.current_sql_for_debug = f"-- Mogrify failed --\nTemplate: {sql_obj_or_str}\nParams: {params_for_step}"
+
+                step_description_peek = self.current_sql_for_debug[:200].upper()
+                if "ALTER TABLE" in step_description_peek: step_description_short = " (ALTER)"
+                elif "CREATE TEMPORARY TABLE" in step_description_peek: step_description_short = " (CREATE TEMP)"
+                elif "UPDATE" in step_description_peek: step_description_short = " (UPDATE)"
+                elif "DROP TABLE" in step_description_peek: step_description_short = " (DROP TEMP)"
                 
-                if "ALTER TABLE" in sql_str_for_log_peek.upper(): step_description += " (ALTER)"
-                elif "CREATE TEMPORARY TABLE" in sql_str_for_log_peek.upper(): step_description += " (CREATE TEMP)"
-                elif "UPDATE" in sql_str_for_log_peek.upper(): step_description += " (UPDATE)"
-                elif "DROP TABLE" in sql_str_for_log_peek.upper(): step_description += " (DROP TEMP)"
-                
-                self.log.emit(f"{step_description}: {sql_str_for_log_peek}...")
+                step_title = f"--- [执行SQL {current_step_num}/{total_actual_steps}]{step_description_short} ---"
+                self.log.emit(step_title)
+                self.log.emit(self.current_sql_for_debug)
+
                 if self.is_cancelled: raise InterruptedError("操作在执行步骤前被取消。")
                 
                 start_time = time.time()
@@ -113,6 +109,7 @@ class MergeSQLWorker(QObject):
                 self.log.emit("关闭数据库连接。")
                 conn_merge.close()
 
+# ... SpecialDataMasterTab 类的剩余部分保持不变 ...
 class SpecialDataMasterTab(QWidget):
     request_preview_signal = Signal(str, str)
 
@@ -527,16 +524,13 @@ class SpecialDataMasterTab(QWidget):
             self.preview_table.setColumnCount(df.shape[1])
             self.preview_table.setHorizontalHeaderLabels(df.columns)
             
-            # REPAIR: Apply the same robust cell-filling logic here.
             for i in range(df.shape[0]):
                 for j in range(df.shape[1]):
                     value = df.iloc[i, j]
                     
-                    # Check if the value is an array-like object
                     if isinstance(value, (list, tuple, np.ndarray)):
                         display_text = str(value)
                     else:
-                        # It's a scalar, use pd.notna
                         display_text = str(value) if pd.notna(value) else ""
                         
                     self.preview_table.setItem(i, j, QTableWidgetItem(display_text))
@@ -556,7 +550,6 @@ class SpecialDataMasterTab(QWidget):
             except Exception:
                 pass
         
-        # Fallback if no connection
         dummy_conn = None
         try:
             dummy_conn = psycopg2.connect(SQL_BUILDER_DUMMY_DB_FOR_AS_STRING)

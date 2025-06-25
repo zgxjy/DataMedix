@@ -64,8 +64,8 @@ class SQLWorker(QObject):
                     self.progress.emit(i + 1, total_statements)
                     continue
 
-                log_stmt_display = stmt_trimmed[:150] + ("..." if len(stmt_trimmed) > 150 else "")
-                self.log.emit(f"执行第 {i+1}/{total_statements} 条语句: {log_stmt_display}")
+                self.log.emit(f"--- [执行SQL {i+1}/{total_statements}] ---")
+                self.log.emit(stmt_trimmed)
 
                 try:
                     start_time = time.time()
@@ -75,9 +75,9 @@ class SQLWorker(QObject):
                     executed_count +=1
                 except psycopg2.Error as db_err:
                     self.log.emit(f"数据库语句执行出错: {db_err}")
-                    self.log.emit(f"出错的SQL语句: {stmt_trimmed}")
+                    self.log.emit(f"出错的SQL语句 (完整):\n{stmt_trimmed}")
                     if conn_extract: conn_extract.rollback()
-                    self.error.emit(f"数据库错误: {db_err}\n问题语句: {log_stmt_display}")
+                    self.error.emit(f"数据库错误: {db_err}\n问题语句: {stmt_trimmed[:200]}...")
                     return
                 
                 self.progress.emit(i + 1, total_statements)
@@ -143,7 +143,7 @@ class SQLWorker(QObject):
         self.log.emit(f"解析得到 {len(statements)} 条有效SQL语句。")
         return statements
 
-
+# ... BaseInfoDataExtractionTab 类的剩余部分保持不变 ...
 class BaseInfoDataExtractionTab(QWidget):
     def __init__(self, get_db_params_func, get_db_profile_func, parent=None):
         super().__init__(parent)
