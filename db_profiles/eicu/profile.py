@@ -17,7 +17,7 @@ class EICUProfile(BaseDbProfile):
     """e-ICU Collaborative Research Database 的具体配置画像。"""
 
     def get_display_name(self) -> str:
-        return "e-ICU v2.0"
+        return "eICU v2.0"
 
     def get_default_connection_params(self) -> Dict[str, str]:
         return {"dbname": "eicu", "user": "postgres"}
@@ -127,3 +127,11 @@ class EICUProfile(BaseDbProfile):
             'DEFAULT_TEXT_VALUE_COLUMN': 'labresulttext',
             'DEFAULT_TIME_COLUMN': 'labresultoffset',
         }
+
+    def get_cohort_join_key(self) -> str:
+        # e-ICU的队列主键总是 patientunitstayid
+        return "patientunitstayid"
+
+    def get_event_table_join_key(self, event_table_name: str) -> str:
+        # e-ICU的所有事件表都用 patientunitstayid 连接
+        return "patientunitstayid"

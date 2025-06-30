@@ -8,6 +8,12 @@ from utils import validate_column_name
 from app_config import SQL_AGGREGATES as GENERIC_SQL_AGGREGATES
 from app_config import AGGREGATE_RESULT_TYPES as GENERIC_AGGREGATE_RESULT_TYPES
 from typing import List, Tuple, Dict, Any, Optional
+from db_profiles.base_profile import BaseDbProfile
+
+
+def _is_eicu_profile(profile: BaseDbProfile) -> bool:
+    """检查数据库画像是否为e-ICU。"""
+    return profile and "eicu" in profile.get_display_name().lower()
 
 SQL_AGGREGATES = {
     **GENERIC_SQL_AGGREGATES,
@@ -25,10 +31,12 @@ AGGREGATE_RESULT_TYPES = {
     "NOTE_COUNT": "INTEGER",
 }
 
+
 def build_special_data_sql(
     target_cohort_table_name: str,
     base_new_column_name: str,
     panel_specific_config: Dict[str, Any],
+    db_profile:BaseDbProfile,
     for_execution: bool = False,
     preview_limit: int = 100
 ) -> Tuple[Optional[Any], Optional[str], Optional[List[Any]], List[Tuple[str, str]]]:
@@ -100,14 +108,17 @@ def build_special_data_sql(
                 item_id_filter_on_event_table_parts.append(psql.SQL("{} IN %s").format(trimmed_col_expr))
                 params_for_cte.append(tuple(selected_item_ids))
     
-    cohort_join_key = "hadm_id"
-    event_join_key = "hadm_id"
-    if source_event_table and "eicu" in source_event_table.lower():
-        cohort_join_key = "patientunitstayid"
-        event_join_key = "patientunitstayid"
-    elif source_event_table and "chartevents" in source_event_table.lower():
-        cohort_join_key = "stay_id"
-        event_join_key = "stay_id"
+    # cohort_join_key = "hadm_id"
+    # event_join_key = "hadm_id"
+    # if source_event_table and "eicu" in source_event_table.lower():
+    #     cohort_join_key = "patientunitstayid"
+    #     event_join_key = "patientunitstayid"
+    # elif source_event_table and "chartevents" in source_event_table.lower():
+    #     cohort_join_key = "stay_id"
+    #     event_join_key = "stay_id"
+
+    cohort_join_key = db_profile.get_cohort_join_key()
+    event_join_key = db_profile.get_event_table_join_key(source_event_table)
 
     from_join_clause_for_cte = psql.SQL("{event_table} {evt_alias} JOIN {cohort_table} {coh_alias} ON {evt_alias}.{evt_key} = {coh_alias}.{coh_key}").format(
         event_table=psql.SQL(source_event_table), evt_alias=event_alias,
@@ -131,26 +142,63 @@ def build_special_data_sql(
     cohort_dischtime = psql.SQL("{}.dischtime").format(cohort_alias)
 
     time_filter_conditions_sql_parts = []
+    is_eicu = _is_eicu_profile(db_profile)
+
     if time_col_for_window:
-        if "24小时" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '24 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
-        elif "48小时" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '48 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
-        elif "整个ICU期间" in current_time_window_text: time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime, end_ts=cohort_icu_outtime))
-        # 修改：start
-        elif "整个住院期间" in current_time_window_text:
-            start_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_admittime) if time_col_is_date else cohort_admittime
-            end_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_dischtime) if time_col_is_date else cohort_dischtime
-            time_filter_conditions_sql_parts.append(
-                psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(
-                    evt=event_alias, 
-                    time_col=actual_event_time_col_ident, 
-                    start_ts=start_ts_expr, 
-                    end_ts=end_ts_expr
+        if is_eicu:
+            # --- e-ICU 的时间窗口逻辑 ---
+            # e-ICU的时间列是分钟偏移量 (integer)
+            if "24小时" in current_time_window_text:
+                # 0 到 1440 分钟 (24 * 60)
+                time_filter_conditions_sql_parts.append(
+                    psql.SQL("{evt}.{time_col} BETWEEN 0 AND 1440").format(
+                        evt=event_alias, time_col=actual_event_time_col_ident
+                    )
                 )
-            )
-        # 修改：end
-        elif "住院以前" in current_time_window_text:
-            if not cte_join_override: return None, f"“住院以前”需要JOIN覆盖逻辑。", [], []
-            time_filter_conditions_sql_parts.append(psql.SQL("{adm_evt}.admittime < {compare_ts}").format(adm_evt=event_admission_alias, compare_ts=cohort_admittime))
+            elif "48小时" in current_time_window_text:
+                # 0 到 2880 分钟 (48 * 60)
+                time_filter_conditions_sql_parts.append(
+                    psql.SQL("{evt}.{time_col} BETWEEN 0 AND 2880").format(
+                        evt=event_alias, time_col=actual_event_time_col_ident
+                    )
+                )
+            elif "整个ICU期间" in current_time_window_text:
+                # 偏移量需要大于等于0，且小于等于ICU出院偏移量
+                time_filter_conditions_sql_parts.append(
+                    psql.SQL("{evt}.{time_col} >= 0 AND {evt}.{time_col} <= {coh}.los_icu_minutes").format(
+                        evt=event_alias, time_col=actual_event_time_col_ident,
+                        coh=cohort_alias
+                    )
+                )
+            # e-ICU没有住院级别的偏移量，所以不处理 "整个住院期间"
+            
+        else:
+            # --- MIMIC-IV (及其他基于TIMESTAMP的数据库) 的时间窗口逻辑 (保持不变) ---
+            cohort_icu_intime = psql.SQL("{}.icu_intime").format(cohort_alias)
+            cohort_icu_outtime = psql.SQL("{}.icu_outtime").format(cohort_alias)
+            cohort_admittime = psql.SQL("{}.admittime").format(cohort_alias)
+            cohort_dischtime = psql.SQL("{}.dischtime").format(cohort_alias)
+            
+            if "24小时" in current_time_window_text:
+                time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '24 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
+            elif "48小时" in current_time_window_text:
+                time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND ({start_ts} + interval '48 hours')").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime))
+            elif "整个ICU期间" in current_time_window_text:
+                time_filter_conditions_sql_parts.append(psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(evt=event_alias, time_col=actual_event_time_col_ident, start_ts=cohort_icu_intime, end_ts=cohort_icu_outtime))
+            elif "整个住院期间" in current_time_window_text:
+                start_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_admittime) if time_col_is_date else cohort_admittime
+                end_ts_expr = psql.SQL("CAST({} AS DATE)").format(cohort_dischtime) if time_col_is_date else cohort_dischtime
+                time_filter_conditions_sql_parts.append(
+                    psql.SQL("{evt}.{time_col} BETWEEN {start_ts} AND {end_ts}").format(
+                        evt=event_alias, 
+                        time_col=actual_event_time_col_ident, 
+                        start_ts=start_ts_expr, 
+                        end_ts=end_ts_expr
+                    )
+                )
+            elif "住院以前" in current_time_window_text:
+                if not cte_join_override: return None, f"“住院以前”需要JOIN覆盖逻辑。", [], []
+                time_filter_conditions_sql_parts.append(psql.SQL("{adm_evt}.admittime < {compare_ts}").format(adm_evt=event_admission_alias, compare_ts=cohort_admittime))
 
     select_event_cols_defs = [psql.SQL("{}.*").format(cohort_alias)]
     event_value_col_for_select_ident = psql.Identifier(value_column_name_from_panel) if value_column_name_from_panel else None
@@ -271,4 +319,5 @@ def build_special_data_sql(
             md_alias=md_alias, join_key=group_by_key, 
             limit=psql.Literal(preview_limit)
         )
+
         return preview_sql, None, params_for_cte, generated_column_details_for_preview

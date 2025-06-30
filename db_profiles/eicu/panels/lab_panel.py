@@ -1,7 +1,7 @@
 # --- START OF FILE db_profiles/eicu/panels/lab_panel.py ---
 from PySide6.QtWidgets import (QVBoxLayout, QGroupBox, QLineEdit, QHBoxLayout, 
                                QLabel, QListWidget, QAbstractItemView, QPushButton,
-                               QApplication, QMessageBox, QScrollArea, QFrame)
+                               QApplication, QMessageBox, QScrollArea, QFrame,QListWidgetItem)
 from PySide6.QtCore import Qt, Slot
 import psycopg2.sql as pgsql
 import traceback
@@ -25,6 +25,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
         cg_scroll = QScrollArea()
         cg_scroll.setWidgetResizable(True)
         cg_scroll.setWidget(self.condition_widget)
+        cg_scroll.setMinimumHeight(200)
         filter_layout.addWidget(cg_scroll)
 
         btn_layout = QHBoxLayout()

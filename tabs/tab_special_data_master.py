@@ -349,6 +349,7 @@ class SpecialDataMasterTab(QWidget):
                 target_cohort_table_name=f"{self.db_profile.get_cohort_table_schema()}.{self.selected_cohort_table}",
                 base_new_column_name=base_new_col_name,
                 panel_specific_config=panel_config_dict,
+                db_profile=self.db_profile, 
                 for_execution=for_execution,
                 preview_limit=preview_limit
             )

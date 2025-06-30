@@ -121,3 +121,23 @@ class MIMICIVProfile(BaseDbProfile):
             'DEFAULT_TEXT_VALUE_COLUMN': "value",
             'DEFAULT_TIME_COLUMN': "charttime",
         }
+
+    def get_cohort_join_key(self) -> str:
+        # MIMIC-IV的队列总是有 stay_id 和 hadm_id，但专项数据JOIN时需要区分
+        # 这里我们返回一个基础的，具体JOIN时再细化
+        return "stay_id" # 假设ICU stay是更常用的
+
+    def get_event_table_join_key(self, event_table_name: str) -> str:
+        # 根据事件表决定连接键
+        if 'chartevents' in event_table_name:
+            return 'stay_id'
+        # 对于 hospital-level 的事件，使用 hadm_id
+        elif 'labevents' in event_table_name or \
+             'prescriptions' in event_table_name or \
+             'procedures_icd' in event_table_name or \
+             'diagnoses_icd' in event_table_name:
+            return 'hadm_id'
+        # note_events 比较特殊，它同时有 hadm_id
+        elif 'note' in event_table_name:
+            return 'hadm_id'
+        return 'stay_id' # 默认返回 stay_id
