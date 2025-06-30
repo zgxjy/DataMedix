@@ -18,7 +18,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
         panel_layout.setContentsMargins(0,0,0,0)
         panel_layout.setSpacing(10)
 
-        filter_group = QGroupBox("筛选化验项目 (来自 eicu_crd.lab)")
+        filter_group = QGroupBox("筛选化验项目 (来自 public.lab)")
         filter_layout = QVBoxLayout(filter_group)
         self.condition_widget = ConditionGroupWidget(is_root=True)
         self.condition_widget.condition_changed.connect(self.config_changed_signal.emit)
@@ -81,7 +81,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
         constants = db_profile.get_profile_constants()
         
         return {
-            "source_event_table": "eicu_crd.lab",
+            "source_event_table": "public.lab",
             "item_id_column_in_event_table": "labname",
             "selected_item_ids": selected_ids,
             "value_column_to_extract": constants.get('DEFAULT_VALUE_COLUMN', 'labresult'),
@@ -131,7 +131,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
             return
 
         try:
-            query = pgsql.SQL("SELECT DISTINCT labname FROM eicu_crd.lab WHERE {cond} ORDER BY labname LIMIT 500").format(
+            query = pgsql.SQL("SELECT DISTINCT labname FROM public.lab WHERE {cond} ORDER BY labname LIMIT 500").format(
                 cond=pgsql.SQL(condition_sql_template)
             )
             self._db_cursor.execute(query, condition_params)

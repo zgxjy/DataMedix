@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                           QFileDialog, QLineEdit, QSpinBox, QGridLayout, QAbstractItemView, QApplication)
 from PySide6.QtCore import Qt, Slot
 import psycopg2
-import psycopg2.sql as pgsql
+import psycopg2.sql as psql
 import os
 import pandas as pd
 import traceback
@@ -301,9 +301,9 @@ class DataExportTab(QWidget):
 
         try:
             preview_limit = self.preview_spinbox.value()
-            table_identifier = pgsql.Identifier(self.selected_table_schema, self.selected_table_name)
-            query = pgsql.SQL("SELECT * FROM {table} ORDER BY RANDOM() LIMIT {limit}").format(
-                table=table_identifier, limit=pgsql.Literal(preview_limit))
+            table_identifier = psql.Identifier(self.selected_table_schema, self.selected_table_name)
+            query = psql.SQL("SELECT * FROM {table} ORDER BY RANDOM() LIMIT {limit}").format(
+                table=table_identifier, limit=psql.Literal(preview_limit))
             
             with conn.cursor() as cur:
                 final_sql_string = cur.mogrify(query).decode(conn.encoding or 'utf-8')
@@ -335,7 +335,7 @@ class DataExportTab(QWidget):
             self.result_table.resizeColumnsToContents()
 
             with conn.cursor() as cur:
-                cur.execute(pgsql.SQL("SELECT COUNT(*) FROM {table}").format(table=table_identifier))
+                cur.execute(psql.SQL("SELECT COUNT(*) FROM {table}").format(table=table_identifier))
                 total_rows = cur.fetchone()[0]
             QMessageBox.information(self, "预览成功", f"表 {self.selected_table_schema}.{self.selected_table_name} (共 {total_rows} 行) 加载预览 {df.shape[0]} 行。")
         except Exception as e:
@@ -369,7 +369,7 @@ class DataExportTab(QWidget):
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            table_identifier = pgsql.Identifier(self.selected_table_schema, self.selected_table_name)
+            table_identifier = psql.Identifier(self.selected_table_schema, self.selected_table_name)
             query_sql_obj = psql.SQL("SELECT * FROM {table}").format(table=table_identifier)
             limit_value = self.limit_spinbox.value()
             if limit_value > 0:

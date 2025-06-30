@@ -7,7 +7,7 @@ from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 class EicuInfusionDrugPanel(BaseSourceConfigPanel):
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self); panel_layout.setContentsMargins(0, 0, 0, 0); panel_layout.setSpacing(10)
-        filter_group = QGroupBox("筛选输液药物 (eicu_crd.infusiondrug)")
+        filter_group = QGroupBox("筛选输液药物 (public.infusiondrug)")
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("药物名称 (drugname) 包含 (ILIKE):"))
         self.drug_name_input = QLineEdit()
@@ -38,7 +38,7 @@ class EicuInfusionDrugPanel(BaseSourceConfigPanel):
         drug_name = self.drug_name_input.text().strip()
         if not drug_name: return {}
         return {
-            "source_event_table": "eicu_crd.infusiondrug",
+            "source_event_table": "public.infusiondrug",
             "item_id_column_in_event_table": "drugname",
             "selected_item_ids": [f"%{drug_name}%"], # 使用ILIKE
             "value_column_to_extract": None,

@@ -7,7 +7,7 @@ from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 class EicuDiagnosisPanel(BaseSourceConfigPanel):
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self); panel_layout.setContentsMargins(0, 0, 0, 0); panel_layout.setSpacing(10)
-        filter_group = QGroupBox("筛选诊断 (eicu_crd.diagnosis)")
+        filter_group = QGroupBox("筛选诊断 (public.diagnosis)")
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("诊断字符串 (diagnosisstring) 包含 (ILIKE):"))
         self.diag_string_input = QLineEdit()
@@ -36,7 +36,7 @@ class EicuDiagnosisPanel(BaseSourceConfigPanel):
         diag_string = self.diag_string_input.text().strip()
         if not diag_string: return {}
         return {
-            "source_event_table": "eicu_crd.diagnosis",
+            "source_event_table": "public.diagnosis",
             "item_id_column_in_event_table": "diagnosisstring",
             "selected_item_ids": [f"%{diag_string}%"], # 使用ILIKE
             "value_column_to_extract": None,

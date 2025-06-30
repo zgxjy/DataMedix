@@ -73,12 +73,20 @@ class CohortCreationWorker(QObject):
 
             if self.admission_cohort_type == COHORT_TYPE_FIRST_EVENT_KEY:
                 order_by_parts = self._get_ranking_order_by()
+                
+                # 根据数据库类型使用不同的分区键
+                partition_field = "base.patientunitstayid" if 'eicu' in self.cohort_schema else "base.subject_id"
+                
                 final_event_select_sql = psql.SQL("""
                     SELECT * FROM (
-                        SELECT base.*, ROW_NUMBER() OVER(PARTITION BY base.subject_id ORDER BY {order}) AS rn
+                        SELECT base.*, ROW_NUMBER() OVER(PARTITION BY {partition_field} ORDER BY {order}) AS rn
                         FROM ({base}) AS base
                     ) ranked WHERE ranked.rn = 1
-                """).format(order=psql.SQL(', ').join(order_by_parts), base=base_event_select_sql)
+                """).format(
+                    partition_field=psql.SQL(partition_field),
+                    order=psql.SQL(', ').join(order_by_parts), 
+                    base=base_event_select_sql
+                )
             else:
                 final_event_select_sql = base_event_select_sql
             
@@ -99,22 +107,43 @@ class CohortCreationWorker(QObject):
             current_step += 1
             self.log.emit(f"步骤 {current_step}/{total_steps}: 创建目标队列数据表 {self.target_table_name_str}...")
             
-            final_table_creation_sql = psql.SQL("""
-                DROP TABLE IF EXISTS {target_table};
-                CREATE TABLE {target_table} AS
-                SELECT 
-                    evt.subject_id, evt.hadm_id, evt.admittime, adm.dischtime,
-                    icu.stay_id, icu.intime AS icu_intime, icu.outtime AS icu_outtime, 
-                    EXTRACT(EPOCH FROM (icu.outtime - icu.intime)) / 3600.0 AS los_icu_hours,
-                    evt.qualifying_event_code, evt.qualifying_event_icd_version,
-                    evt.qualifying_event_title, evt.qualifying_event_seq_num
-                FROM {temp_event} evt
-                JOIN mimiciv_hosp.admissions adm ON evt.hadm_id = adm.hadm_id
-                LEFT JOIN (
-                    SELECT i.*, ROW_NUMBER() OVER(PARTITION BY i.hadm_id ORDER BY i.intime) as rn 
-                    FROM mimiciv_icu.icustays i
-                ) icu ON evt.hadm_id = icu.hadm_id AND icu.rn = 1;
-            """).format(target_table=target_table_ident, temp_event=temp_event_ad_table)
+            # 根据数据库类型生成不同的创建表SQL
+            if 'eicu' in self.cohort_schema:  # eICU数据库
+                # 完全采用用户示例的SQL结构
+                final_table_creation_sql = psql.SQL("""
+                    DROP TABLE IF EXISTS {target_table};
+                    CREATE TABLE {target_table} AS
+                    SELECT 
+                        evt.patientunitstayid,
+                        pat.uniquepid,
+                        evt.admittime,
+                        pat.unitdischargeoffset AS los_icu_minutes,
+                        pat.unitadmittime24 AS icu_intime,
+                        evt.qualifying_event_title,
+                        evt.qualifying_event_time AS diagnosis_offset_min,
+                        pat.age,
+                        pat.gender,
+                        pat.hospitaldischargestatus
+                    FROM {temp_event} evt
+                    JOIN patient pat ON evt.patientunitstayid = pat.patientunitstayid;
+                """).format(target_table=target_table_ident, temp_event=temp_event_ad_table)
+            else:  # MIMIC-IV数据库
+                final_table_creation_sql = psql.SQL("""
+                    DROP TABLE IF EXISTS {target_table};
+                    CREATE TABLE {target_table} AS
+                    SELECT 
+                        evt.subject_id, evt.hadm_id, evt.admittime, adm.dischtime,
+                        icu.stay_id, icu.intime AS icu_intime, icu.outtime AS icu_outtime, 
+                        EXTRACT(EPOCH FROM (icu.outtime - icu.intime)) / 3600.0 AS los_icu_hours,
+                        evt.qualifying_event_code, evt.qualifying_event_icd_version,
+                        evt.qualifying_event_title, evt.qualifying_event_seq_num
+                    FROM {temp_event} evt
+                    JOIN mimiciv_hosp.admissions adm ON evt.hadm_id = adm.hadm_id
+                    LEFT JOIN (
+                        SELECT i.*, ROW_NUMBER() OVER(PARTITION BY i.hadm_id ORDER BY i.intime) as rn 
+                        FROM mimiciv_icu.icustays i
+                    ) icu ON evt.hadm_id = icu.hadm_id AND icu.rn = 1;
+                """).format(target_table=target_table_ident, temp_event=temp_event_ad_table)
             
             self.log.emit("--- [将执行SQL]: 创建最终队列数据表 ---")
             self.log.emit(cur.mogrify(final_table_creation_sql).decode(conn.encoding or 'utf-8', 'replace'))
@@ -125,8 +154,15 @@ class CohortCreationWorker(QObject):
 
             current_step += 1
             self.log.emit(f"步骤 {current_step}/{total_steps}: 为表创建索引...")
-            cur.execute(psql.SQL("CREATE INDEX ON {target_table} (subject_id);").format(target_table=target_table_ident))
-            cur.execute(psql.SQL("CREATE INDEX ON {target_table} (hadm_id);").format(target_table=target_table_ident))
+            # 根据数据库类型选择正确的索引字段
+            if 'eicu' in self.cohort_schema:
+                # eICU用patientunitstayid和stay_id作为主键
+                cur.execute(psql.SQL("CREATE INDEX ON {target_table} (patientunitstayid);").format(target_table=target_table_ident))
+                cur.execute(psql.SQL("CREATE INDEX ON {target_table} (uniquepid);").format(target_table=target_table_ident))
+            else:
+                # MIMIC-IV用subject_id和hadm_id作为主键
+                cur.execute(psql.SQL("CREATE INDEX ON {target_table} (subject_id);").format(target_table=target_table_ident))
+                cur.execute(psql.SQL("CREATE INDEX ON {target_table} (hadm_id);").format(target_table=target_table_ident))
             if self.is_cancelled: raise InterruptedError("操作已取消")
             self.progress.emit(current_step, total_steps)
             
@@ -148,52 +184,92 @@ class CohortCreationWorker(QObject):
             if conn: conn.close()
     
     def _get_ranking_order_by(self):
-        order_by_parts = [psql.SQL("base.admittime ASC"), psql.SQL("base.hadm_id ASC")]
-        event_time_col = self.source_mode_details.get("event_time_col")
-        if event_time_col:
-            order_by_parts.append(psql.SQL("base.qualifying_event_time ASC NULLS LAST"))
-        seq_num_col = self.source_mode_details.get("event_seq_num_col")
-        if seq_num_col:
-            order_by_parts.append(psql.SQL("base.qualifying_event_seq_num ASC"))
+        # 根据数据库类型生成不同的排序条件
+        if 'eicu' in self.cohort_schema:
+            # eICU特定的排序条件 - 完全匹配用户示例SQL
+            order_by_parts = []
+            event_time_col = self.source_mode_details.get("event_time_col")
+            if event_time_col:
+                order_by_parts.append(psql.SQL("COALESCE(base.qualifying_event_time, 0) ASC"))
+            else:
+                order_by_parts.append(psql.SQL("base.admittime ASC"))
+        else:
+            # MIMIC-IV默认排序条件
+            order_by_parts = [psql.SQL("base.admittime ASC"), psql.SQL("base.hadm_id ASC")]
+            event_time_col = self.source_mode_details.get("event_time_col")
+            if event_time_col:
+                order_by_parts.append(psql.SQL("base.qualifying_event_time ASC NULLS LAST"))
+            seq_num_col = self.source_mode_details.get("event_seq_num_col")
+            if seq_num_col:
+                order_by_parts.append(psql.SQL("base.qualifying_event_seq_num ASC"))
         return order_by_parts
 
     def _build_base_event_query(self):
         details = self.source_mode_details
         event_table = psql.SQL(details['event_table'])
         
-        select_list = [
-            psql.SQL("e.subject_id"), psql.SQL("e.hadm_id"), psql.SQL("adm.admittime"),
-            psql.SQL("e.{} AS qualifying_event_code").format(psql.Identifier(details['event_icd_col'])),
-        ]
+        select_list = []
         
-        from_clause = psql.SQL("FROM {event_table} e JOIN mimiciv_hosp.admissions adm ON e.hadm_id = adm.hadm_id").format(event_table=event_table)
+        # 根据数据库类型处理不同的表结构
+        db_schema = self.cohort_schema
+        if 'eicu' in db_schema:  # eICU数据库
+            # eICU特定字段定义，这里已经包含了所有需要的字段
+            select_list = [
+                psql.SQL("e.patientunitstayid AS patientunitstayid"), 
+                psql.SQL("pat.unitadmittime24 AS admittime"),
+                psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])),
+                psql.SQL("e.{} AS qualifying_event_seq_num").format(psql.Identifier(details.get('event_seq_num_col', 'diagnosispriority'))),
+                psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details.get('event_time_col', 'diagnosisoffset'))),
+                psql.SQL("NULL AS qualifying_event_icd_version") # eICU没有ICD版本
+            ]
+            from_clause = psql.SQL("FROM {event_table} e JOIN patient pat ON e.patientunitstayid = pat.patientunitstayid").format(event_table=event_table)
+        else:  # 默认MIMIC-IV数据库
+            select_list = [
+                psql.SQL("e.subject_id"), 
+                psql.SQL("e.hadm_id"), 
+                psql.SQL("adm.admittime"),
+                psql.SQL("e.{} AS qualifying_event_code").format(psql.Identifier(details['event_icd_col'])),
+            ]
+            from_clause = psql.SQL("FROM {event_table} e JOIN mimiciv_hosp.admissions adm ON e.hadm_id = adm.hadm_id").format(event_table=event_table)
 
-        dict_table = psql.SQL(details['dictionary_table']) if details.get('dictionary_table') else None
-        if dict_table:
-            join_on_parts = [psql.SQL("e.{event_icd_col} = dd.{dict_icd_col}").format(
+        # 对于非eICU数据库，添加字典表并添加额外的字段
+        if not 'eicu' in self.cohort_schema:  # 只对MIMIC-IV等数据库添加这些字段
+            dict_table = psql.SQL(details['dictionary_table']) if details.get('dictionary_table') else None
+            if dict_table:
+                join_on_parts = [psql.SQL("e.{event_icd_col} = dd.{dict_icd_col}").format(
+                    event_icd_col=psql.Identifier(details['event_icd_col']),
+                    dict_icd_col=psql.Identifier(details['dict_icd_col'])
+                )]
+                if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table']:
+                     join_on_parts.append(psql.SQL("e.icd_version = dd.icd_version"))
+    
+                from_clause += psql.SQL(" JOIN {dict_table} dd ON {join_on}").format(
+                    dict_table=dict_table, join_on=psql.SQL(" AND ").join(join_on_parts)
+                )
+                select_list.append(psql.SQL("dd.{} AS qualifying_event_title").format(psql.Identifier(details['dict_title_col'])))
+            else:
+                 select_list.append(psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])))
+    
+            if details.get("event_seq_num_col"):
+                select_list.append(psql.SQL("e.{} AS qualifying_event_seq_num").format(psql.Identifier(details['event_seq_num_col'])))
+            else:
+                select_list.append(psql.SQL("NULL AS qualifying_event_seq_num"))
+            if details.get("event_time_col"):
+                 select_list.append(psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details['event_time_col'])))
+            if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table']:
+                select_list.append(psql.SQL("e.icd_version AS qualifying_event_icd_version"))
+            else:
+                select_list.append(psql.SQL("NULL AS qualifying_event_icd_version"))
+        
+        # eICU的字典表处理
+        dict_table = psql.SQL(details['dictionary_table']) if details.get('dictionary_table') and 'eicu' in self.cohort_schema else None
+        if dict_table and 'eicu' in self.cohort_schema:
+            # eICU特定的字典表连接逻辑，如果需要的话
+            from_clause += psql.SQL(" JOIN {dict_table} dd ON e.{event_icd_col} = dd.{dict_icd_col}").format(
+                dict_table=dict_table, 
                 event_icd_col=psql.Identifier(details['event_icd_col']),
                 dict_icd_col=psql.Identifier(details['dict_icd_col'])
-            )]
-            if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table']:
-                 join_on_parts.append(psql.SQL("e.icd_version = dd.icd_version"))
-
-            from_clause += psql.SQL(" JOIN {dict_table} dd ON {join_on}").format(
-                dict_table=dict_table, join_on=psql.SQL(" AND ").join(join_on_parts)
             )
-            select_list.append(psql.SQL("dd.{} AS qualifying_event_title").format(psql.Identifier(details['dict_title_col'])))
-        else:
-             select_list.append(psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])))
-
-        if details.get("event_seq_num_col"):
-            select_list.append(psql.SQL("e.{} AS qualifying_event_seq_num").format(psql.Identifier(details['event_seq_num_col'])))
-        else:
-            select_list.append(psql.SQL("NULL AS qualifying_event_seq_num"))
-        if details.get("event_time_col"):
-             select_list.append(psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details['event_time_col'])))
-        if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table']:
-            select_list.append(psql.SQL("e.icd_version AS qualifying_event_icd_version"))
-        else:
-            select_list.append(psql.SQL("NULL AS qualifying_event_icd_version"))
 
         where_clause = psql.SQL("TRUE")
         if dict_table:
@@ -593,7 +669,26 @@ class QueryCohortTab(QWidget):
             conn = psycopg2.connect(**db_params)
             cur = conn.cursor()
             table_identifier = psql.Identifier(schema_name, table_name)
-            preview_query = psql.SQL("SELECT * FROM {} ORDER BY subject_id, hadm_id LIMIT 100;").format(table_identifier)
+            # 根据数据库类型选择正确的排序字段
+            db_profile = self.get_db_profile()
+            # 判断数据库类型的更健壮方法，不依赖特定接口
+            is_eicu_db = False
+            
+            if db_profile:
+                # 检查是否为eICU数据库
+                profile_name = db_profile.get_display_name().lower()
+                if 'eicu' in profile_name:
+                    is_eicu_db = True
+                # 如果有get_cohort_table_schema方法也可以检查
+                if hasattr(db_profile, 'get_cohort_table_schema') and 'eicu' in getattr(db_profile, 'get_cohort_table_schema')():
+                    is_eicu_db = True
+                    
+            if is_eicu_db:
+                # eICU数据库使用patientunitstayid排序
+                preview_query = psql.SQL("SELECT * FROM {} ORDER BY patientunitstayid LIMIT 100;").format(table_identifier)
+            else:
+                # MIMIC-IV数据库使用subject_id和hadm_id排序
+                preview_query = psql.SQL("SELECT * FROM {} ORDER BY subject_id, hadm_id LIMIT 100;").format(table_identifier)
             
             self.sql_preview.append(f"\n-- 队列表预览SQL:\n{preview_query.as_string(conn)}")
             cur.execute(preview_query)

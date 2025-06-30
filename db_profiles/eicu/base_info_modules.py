@@ -5,7 +5,7 @@ def col_def(name, type):
 
 def add_demography_and_apache(table_name, db_profile, **kwargs):
     """
-    从 eicu_crd.patient 和 eicu_crd.apachepatientresult 表中为队列添加人口学、住院信息和APACHE-IVa评分。
+    从 public.patient 和 public.apachepatientresult 表中为队列添加人口学、住院信息和APACHE-IVa评分。
     """
     col_defs = [
         col_def("gender", "character varying"),
@@ -44,7 +44,7 @@ SET
     unitadmittime24 = p.unitadmittime24,
     unitdischargetime24 = p.unitdischargetime24,
     uniquepid = p.uniquepid
-FROM eicu_crd.patient p
+FROM public.patient p
 WHERE cohort.patientunitstayid = p.patientunitstayid;
 
 -- Then, update APACHE IVa scores, taking the first score for the stay
@@ -53,10 +53,10 @@ WITH apache_scores AS (
         apr.patientunitstayid,
         apr.apachescore,
         apr.apacheversion,
-        apr.predictedicumortality,
-        apr.predictedhospitalmortality,
-        ROW_NUMBER() OVER(PARTITION BY apr.patientunitstayid ORDER BY apr.apachepatientresultid) as rn
-    FROM eicu_crd.apachepatientresult apr
+        CAST(apr.predictedicumortality AS double precision) as predictedicumortality,
+        CAST(apr.predictedhospitalmortality AS double precision) as predictedhospitalmortality,
+        ROW_NUMBER() OVER(PARTITION BY apr.patientunitstayid ORDER BY apr.apachepatientresultsid) as rn
+    FROM public.apachepatientresult apr
     WHERE apr.apacheversion = 'IVa' AND apr.patientunitstayid IN (SELECT patientunitstayid FROM {table_name})
 )
 UPDATE {table_name} cohort
@@ -69,3 +69,5 @@ FROM apache_scores a
 WHERE cohort.patientunitstayid = a.patientunitstayid AND a.rn = 1;
 """
     return col_defs, update_sql
+
+

@@ -7,7 +7,7 @@ from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 class EicuTreatmentPanel(BaseSourceConfigPanel):
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self); panel_layout.setContentsMargins(0, 0, 0, 0); panel_layout.setSpacing(10)
-        filter_group = QGroupBox("筛选治疗 (eicu_crd.treatment)")
+        filter_group = QGroupBox("筛选治疗 (public.treatment)")
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("治疗路径 (treatmentstring) 包含 (ILIKE):"))
         self.treat_string_input = QLineEdit()
@@ -36,7 +36,7 @@ class EicuTreatmentPanel(BaseSourceConfigPanel):
         treat_string = self.treat_string_input.text().strip()
         if not treat_string: return {}
         return {
-            "source_event_table": "eicu_crd.treatment",
+            "source_event_table": "public.treatment",
             "item_id_column_in_event_table": "treatmentstring",
             "selected_item_ids": [f"%{treat_string}%"], # 使用ILIKE
             "value_column_to_extract": None,

@@ -8,14 +8,14 @@ from ui_components.value_aggregation_widget import ValueAggregationWidget
 from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 
 class EicuNurseChartingPanel(BaseSourceConfigPanel):
-    """用于配置从 eicu_crd.nursecharting 表提取数据的面板。"""
+    """用于配置从 public.nursecharting 表提取数据的面板。"""
 
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(10)
 
-        filter_group = QGroupBox("筛选护理记录项 (eicu_crd.nursecharting)")
+        filter_group = QGroupBox("筛选护理记录项 (public.nursecharting)")
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("护理记录项:"))
         self.item_combo = QComboBox()
@@ -78,7 +78,7 @@ class EicuNurseChartingPanel(BaseSourceConfigPanel):
         value_col = "nursingchartcelltypevalname" if is_text_mode else "nursingchartvalue"
         
         return {
-            "source_event_table": "eicu_crd.nursecharting",
+            "source_event_table": "public.nursecharting",
             "item_id_column_in_event_table": "nursingchartcelltypecat",
             "selected_item_ids": [selected_item],
             "value_column_to_extract": value_col,

@@ -85,12 +85,14 @@ def build_special_data_sql(
 
         if use_ilike:
             # 如果ID中包含%，则构建多个ILIKE条件
-            ilike_parts = [psql.SQL("TRIM({}.{}) ILIKE %s").format(event_alias, event_table_item_id_col_ident) for _ in selected_item_ids]
+            # 修复：增加了 CAST(... AS TEXT)
+            ilike_parts = [psql.SQL("TRIM(CAST({}.{} AS TEXT)) ILIKE %s").format(event_alias, event_table_item_id_col_ident) for _ in selected_item_ids]
             item_id_filter_on_event_table_parts.append(psql.SQL("({})").format(psql.SQL(" OR ").join(ilike_parts)))
             params_for_cte.extend(selected_item_ids)
         else:
             # 否则，使用常规的 = 或 IN
-            trimmed_col_expr = psql.SQL("TRIM({}.{})").format(event_alias, event_table_item_id_col_ident)
+            # 修复：增加了 CAST(... AS TEXT)
+            trimmed_col_expr = psql.SQL("TRIM(CAST({}.{} AS TEXT))").format(event_alias, event_table_item_id_col_ident)
             if len(selected_item_ids) == 1:
                 item_id_filter_on_event_table_parts.append(psql.SQL("{} = %s").format(trimmed_col_expr))
                 params_for_cte.append(selected_item_ids[0])

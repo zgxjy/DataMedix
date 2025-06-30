@@ -7,14 +7,14 @@ from ui_components.value_aggregation_widget import ValueAggregationWidget
 from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 
 class EicuVitalPeriodicPanel(BaseSourceConfigPanel):
-    """用于配置从 eicu_crd.vitalperiodic 表提取数据的面板。"""
+    """用于配置从 public.vitalperiodic 表提取数据的面板。"""
 
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(10)
 
-        filter_group = QGroupBox("筛选生命体征 (eicu_crd.vitalperiodic)")
+        filter_group = QGroupBox("筛选生命体征 (public.vitalperiodic)")
         filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("生命体征项:"))
         self.vital_signs_combo = QComboBox()
@@ -57,7 +57,7 @@ class EicuVitalPeriodicPanel(BaseSourceConfigPanel):
         if not selected_vital: return {}
         
         return {
-            "source_event_table": "eicu_crd.vitalperiodic",
+            "source_event_table": "public.vitalperiodic",
             "item_id_column_in_event_table": None,
             "selected_item_ids": [],
             "value_column_to_extract": selected_vital,
