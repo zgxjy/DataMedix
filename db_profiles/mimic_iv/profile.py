@@ -60,7 +60,11 @@ class MIMICIVProfile(BaseDbProfile):
                 "dict_title_col": "long_title",
                 "event_seq_num_col": "seq_num",
                 "event_time_col": None,
-                "search_fields": [("long_title", "标题/描述")],
+                "search_fields": [
+                    ("long_title", "标题/描述"),
+                    ("icd_code", "ICD代码 (精确)"),
+                    ("icd_version", "ICD版本 (精确)"),
+                    ],
             },
             "procedure": {
                 "display_name": "按手术/操作ICD筛选",
@@ -71,7 +75,11 @@ class MIMICIVProfile(BaseDbProfile):
                 "dict_title_col": "long_title",
                 "event_seq_num_col": "seq_num",
                 "event_time_col": "chartdate",
-                "search_fields": [("long_title", "标题/描述")],
+                "search_fields": [
+                    ("long_title", "标题/描述"),
+                    ("icd_code", "ICD代码 (精确)"),
+                    ("icd_version", "ICD版本 (精确)"),
+                ],
             }
         }
 
@@ -100,7 +108,8 @@ class MIMICIVProfile(BaseDbProfile):
                 'table_name': "mimiciv_hosp.d_icd_diagnoses",
                 'columns': [("icd_code", "ICD Code"), ("icd_version", "ICD Version"), ("long_title", "Long Title")],
                 'search_fields': [("long_title", "诊断描述 (Long Title)"),
-                                  ("icd_code", "诊断代码 (ICD Code 精确)"), ("icd_version", "ICD 版本 (精确)")]
+                                  ("icd_code", "诊断代码 (ICD Code 精确)"),
+                                   ("icd_version", "ICD 版本 (精确)")]
             },
             {
                 'display_name': "操作代码 (d_icd_procedures)",

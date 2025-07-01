@@ -23,20 +23,25 @@ class SQLWorker(QObject):
         self.db_params = db_params
         self.table_name = table_name
         self.is_cancelled = False
+        self.conn = None
 
     def cancel(self):
         self.log.emit("SQL 执行被请求取消...")
         self.is_cancelled = True
+        if self.conn:
+            try:
+                self.conn.cancel()
+            except Exception as e:
+                self.log.emit(f"发送取消请求时出错: {e}")
 
     def run(self):
-        conn_extract = None
         try:
             cohort_schema, table_name_only = self.table_name.split('.')
             self.log.emit(f"准备为表 '{self.table_name}' 执行SQL批处理...")
             self.log.emit("连接数据库...")
-            conn_extract = psycopg2.connect(**self.db_params)
-            conn_extract.autocommit = False
-            cur = conn_extract.cursor()
+            self.conn = psycopg2.connect(**self.db_params)
+            self.conn.autocommit = False
+            cur = self.conn.cursor()
 
             self.log.emit("开始解析和执行SQL语句...")
             sql_statements = self._parse_sql(self.sql_to_execute)
@@ -54,7 +59,7 @@ class SQLWorker(QObject):
             for i, stmt in enumerate(sql_statements):
                 if self.is_cancelled:
                     self.log.emit("SQL 执行已取消。正在回滚...")
-                    if conn_extract: conn_extract.rollback()
+                    if self.conn: self.conn.rollback()
                     self.error.emit("操作已取消")
                     return
 
@@ -74,9 +79,13 @@ class SQLWorker(QObject):
                     self.log.emit(f"语句执行成功 (耗时: {end_time - start_time:.2f} 秒)")
                     executed_count +=1
                 except psycopg2.Error as db_err:
+                    if "cancel" in str(db_err).lower():
+                        self.log.emit("数据库查询被成功中断。")
+                        self.error.emit("操作已取消")
+                        return
                     self.log.emit(f"数据库语句执行出错: {db_err}")
                     self.log.emit(f"出错的SQL语句 (完整):\n{stmt_trimmed}")
-                    if conn_extract: conn_extract.rollback()
+                    if self.conn: self.conn.rollback()
                     self.error.emit(f"数据库错误: {db_err}\n问题语句: {stmt_trimmed[:200]}...")
                     return
                 
@@ -84,13 +93,13 @@ class SQLWorker(QObject):
 
             if self.is_cancelled:
                 self.log.emit("SQL 执行在提交前已取消。正在回滚...")
-                if conn_extract: conn_extract.rollback()
+                if self.conn: self.conn.rollback()
                 self.error.emit("操作已取消")
                 return
 
             if executed_count > 0:
                 self.log.emit("所有语句执行完毕。正在提交事务...")
-                conn_extract.commit()
+                self.conn.commit()
                 self.log.emit("事务已成功提交。")
             else:
                 self.log.emit("没有实际执行的修改语句，无需提交。")
@@ -106,15 +115,15 @@ class SQLWorker(QObject):
             self.log.emit("数据提取和预览准备完成。")
             self.finished.emit(columns, rows)
         except Exception as e:
-            if conn_extract and not conn_extract.closed:
+            if self.conn and not self.conn.closed:
                 try: 
-                    conn_extract.rollback()
+                    self.conn.rollback()
                 except Exception as rb_err: 
                     self.log.emit(f"尝试回滚失败: {rb_err}")
             self.error.emit(f"SQLWorker 意外错误: {str(e)}")
         finally:
-            if conn_extract:
-                conn_extract.close()
+            if self.conn:
+                self.conn.close()
 
     def _parse_sql(self, sql_script):
         statements = []

@@ -468,6 +468,15 @@ class SpecialDataMasterTab(QWidget):
         if QMessageBox.question(self, '确认操作', col_preview_msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.No:
             return
             
+        col_names = [name for name, type_str in col_details]
+        self.sql_preview.setText(
+            f"-- PREPARED FOR EXECUTION --\n"
+            f"Target Table: {self.selected_cohort_table}\n"
+            f"Action: Add/Update {len(col_names)} columns.\n"
+            f"Columns: {', '.join(col_names)}\n\n"
+            f"Detailed SQL steps will be shown in the log below during execution."
+        )
+
         db_params = self.get_db_params()
         if not db_params:
             QMessageBox.critical(self, "合并失败", "无法获取数据库连接参数。")
@@ -484,7 +493,6 @@ class SpecialDataMasterTab(QWidget):
         self.merge_worker.log.connect(self.update_execution_log)
         self.merge_worker.finished.connect(self.worker_thread.quit)
         self.merge_worker.error.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.trigger_preview_after_thread_finish)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.finished.connect(lambda: setattr(self, 'merge_worker', None))
         self.worker_thread.start()
@@ -515,9 +523,10 @@ class SpecialDataMasterTab(QWidget):
             with conn.cursor() as cur:
                 final_sql_for_preview = cur.mogrify(preview_sql_obj, params_for_cte).decode(conn.encoding or 'utf-8')
             
-            self.sql_preview.setText(f"-- Preview Query (parameters embedded):\n{final_sql_for_preview}")
-            QApplication.processEvents()
+            self.sql_preview.setText(f"-- Preview Query (parameters embedded for display):\n{final_sql_for_preview}")
+            QApplication.processEvents() # 确保UI立即更新
 
+            # 使用已经替换好参数的SQL字符串执行查询
             df = pd.read_sql_query(final_sql_for_preview, conn)
             
             self.preview_table.clearContents()
@@ -570,7 +579,9 @@ class SpecialDataMasterTab(QWidget):
     def on_merge_worker_finished_actions(self):
         desc = self.merge_worker.new_cols_description_str if self.merge_worker else ""
         self.update_execution_log(f"成功向表 {self.selected_cohort_table} 添加/更新与 '{desc}' 相关的列。")
-        QMessageBox.information(self, "合并成功", f"已成功向表 {self.selected_cohort_table} 添加/更新列。")
+        QMessageBox.information(self, "合并成功", 
+                                f"已成功向表 {self.selected_cohort_table} 添加/更新列。\n"
+                                "您可以前往“5. 数据预览与导出”页面刷新并查看更新后的数据表。")
         self.prepare_for_long_operation(False)
 
     @Slot()
