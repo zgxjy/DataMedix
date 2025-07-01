@@ -6,3 +6,4 @@ re
 sqlalchemy 
 numpy
 chardet
+pygments

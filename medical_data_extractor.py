@@ -1,13 +1,18 @@
 # --- START OF FILE medical_data_extractor.py ---
+
 import sys
-from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QMessageBox,
-                               QVBoxLayout, QWidget, QHBoxLayout, QComboBox, QLabel)
-from PySide6.QtCore import Slot, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QMessageBox, QVBoxLayout, QWidget, 
+    QHBoxLayout, QComboBox, QLabel, QDockWidget, QToolBar
+)
+from PySide6.QtCore import Slot, Qt, Signal
+from PySide6.QtGui import QIcon, QAction
 
+# 导入所有 Profile
 from db_profiles.mimic_iv.profile import MIMICIVProfile
-from db_profiles.eicu.profile import EICUProfile 
+from db_profiles.eicu.profile import EICUProfile
 
+# 导入所有 Tab 页面
 from tabs.tab_connection import ConnectionTab
 from tabs.tab_structure import StructureTab
 from tabs.tab_query_cohort import QueryCohortTab
@@ -16,14 +21,16 @@ from tabs.tab_special_data_master import SpecialDataMasterTab
 from tabs.tab_data_dictionary import DataDictionaryTab
 from tabs.tab_data_export import DataExportTab
 from tabs.tab_data_merge import DataMergeTab
+from tabs.tab_sql_lab import SqlLabTab
+
 from app_config import APP_NAME, APP_VERSION
 
 class MedicalDataExtractor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} - v{APP_VERSION}")
-        self.setGeometry(100, 100, 950, 880)
-        self.setMinimumSize(900, 700)
+        self.setGeometry(100, 100, 1100, 900) # 稍微调大默认尺寸
+        self.setMinimumSize(950, 750)
         
         icon_path = "assets/icons/icon.ico"
         try:
@@ -31,155 +38,195 @@ class MedicalDataExtractor(QMainWindow):
         except Exception as e:
             print(f"Could not load window icon: {e}")
 
-        # REFACTOR: Profile management
         self.db_profiles = {
             "MIMIC-IV": MIMICIVProfile,
             "e-ICU": EICUProfile,
         }
         self.active_db_profile = None
 
-        # --- Main Layout Setup ---
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-
-        # --- Profile Selector UI ---
-        profile_selector_layout = QHBoxLayout()
-        profile_selector_layout.addWidget(QLabel("<b>选择数据库类型:</b>"))
-        self.profile_combo = QComboBox()
-        self.profile_combo.addItems(self.db_profiles.keys())
-        profile_selector_layout.addWidget(self.profile_combo)
-        profile_selector_layout.addStretch()
-        main_layout.addLayout(profile_selector_layout)
-
-        # --- Tab Widget ---
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-
-        # REFACTOR: Instantiate tabs, passing profile getter
+        # --- 实例化所有 Tab 页面 ---
         self.connection_tab = ConnectionTab(self.get_active_db_profile)
-        self.structure_tab = StructureTab(self.get_db_params)
-        self.data_dictionary_tab = DataDictionaryTab(self.get_db_params, self.get_active_db_profile)
         self.query_cohort_tab = QueryCohortTab(self.get_db_params, self.get_active_db_profile)
         self.data_extraction_tab = BaseInfoDataExtractionTab(self.get_db_params, self.get_active_db_profile)
         self.special_data_master_tab = SpecialDataMasterTab(self.get_db_params, self.get_active_db_profile)
         self.data_export_tab = DataExportTab(self.get_db_params)
+        
+        # 实例化辅助工具页面
         self.data_merge_tab = DataMergeTab()
+        self.structure_tab = StructureTab(self.get_db_params)
+        self.data_dictionary_tab = DataDictionaryTab(self.get_db_params, self.get_active_db_profile)
+        self.sql_lab_tab = SqlLabTab(self.get_db_params, self)
 
-        # Add tabs
-        self.tabs.addTab(self.connection_tab, "1. 数据库连接")
-        self.tabs.addTab(self.structure_tab, "数据库结构查看")
-        self.tabs.addTab(self.data_dictionary_tab, "数据字典查看")
-        self.tabs.addTab(self.query_cohort_tab, "2. 查找与创建队列")
-        self.tabs.addTab(self.data_extraction_tab, "3. 添加基础数据")
-        self.tabs.addTab(self.special_data_master_tab, "4. 添加专项数据")
-        self.tabs.addTab(self.data_export_tab, "5. 数据预览与导出")
-        self.tabs.addTab(self.data_merge_tab, "6. 数据合并")
+        # 存储所有页面，方便后续遍历
+        self.all_pages = [
+            self.connection_tab, self.query_cohort_tab, self.data_extraction_tab,
+            self.special_data_master_tab, self.data_export_tab, self.data_merge_tab,
+            self.structure_tab, self.data_dictionary_tab, self.sql_lab_tab
+        ]
 
-        # --- Signal Connections ---
+        # --- 设置主布局和中心控件 ---
+        self.setup_main_layout_and_tabs()
+        
+        # --- 设置辅助工具的停靠窗口和工具栏 ---
+        self.setup_docks_and_toolbar()
+        
+        # --- 信号连接 ---
         self.profile_combo.currentTextChanged.connect(self.on_profile_changed)
         self.connection_tab.connected_signal.connect(self.on_db_connected)
-        self.special_data_master_tab.request_preview_signal.connect(self.data_export_tab.preview_specific_table)
+        self.special_data_master_tab.request_preview_signal.connect(self.handle_special_data_preview)
+        
+        # 联动信号连接
         self.structure_tab.request_table_preview_signal.connect(self.handle_structure_table_preview)
+        self.structure_tab.request_send_to_sql_lab_signal.connect(self.handle_send_to_sql_lab)
 
-        # Initial profile setup
+        # 初始 profile 设置
         self.on_profile_changed(self.profile_combo.currentText())
 
+    def setup_main_layout_and_tabs(self):
+        """设置主窗口的核心布局和主流程标签页"""
+        # 主流程标签页作为中心控件
+        self.main_tabs = QTabWidget()
+        self.setCentralWidget(self.main_tabs)
+        self.main_tabs.setDocumentMode(True) # 样式更紧凑
+
+        # --- 添加主流程 Tab ---
+        self.main_tabs.addTab(self.connection_tab, "1. 数据库连接")
+        self.main_tabs.addTab(self.query_cohort_tab, "2. 查找与创建队列")
+        self.main_tabs.addTab(self.data_extraction_tab, "3. 添加基础数据")
+        self.main_tabs.addTab(self.special_data_master_tab, "4. 添加专项数据")
+        self.main_tabs.addTab(self.data_export_tab, "5. 数据预览与导出")
+        
+        # --- 数据库 Profile 选择器 (放在一个工具栏里) ---
+        profile_toolbar = QToolBar("数据库选择")
+        profile_toolbar.setObjectName("ProfileToolbar")
+        profile_toolbar.setMovable(False)
+        self.addToolBar(Qt.TopToolBarArea, profile_toolbar)
+        
+        profile_toolbar.addWidget(QLabel("<b>选择数据库类型:</b>"))
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItems(self.db_profiles.keys())
+        profile_toolbar.addWidget(self.profile_combo)
+
+    def setup_docks_and_toolbar(self):
+        """创建辅助工具的停靠窗口 (QDockWidget) 和启动它们的工具栏"""
+        self.tools_toolbar = QToolBar("辅助工具")
+        self.tools_toolbar.setObjectName("ToolsToolbar")
+        self.addToolBar(Qt.TopToolBarArea, self.tools_toolbar)
+        self.tools_toolbar.setIconSize(self.tools_toolbar.iconSize() * 0.8)
+
+        # --- 1. 数据合并工具 ---
+        self.merge_dock = self.create_dock("数据合并", self.data_merge_tab, Qt.BottomDockWidgetArea)
+        merge_action = self.create_tool_action("数据合并", "assets/icons/merge.png", self.merge_dock)
+        self.tools_toolbar.addAction(merge_action)
+
+        # --- 2. 数据库结构查看 ---
+        self.structure_dock = self.create_dock("数据库结构", self.structure_tab, Qt.LeftDockWidgetArea)
+        structure_action = self.create_tool_action("结构查看", "assets/icons/database.png", self.structure_dock)
+        self.tools_toolbar.addAction(structure_action)
+        
+        # --- 3. 数据字典 ---
+        self.dictionary_dock = self.create_dock("数据字典", self.data_dictionary_tab, Qt.LeftDockWidgetArea)
+        dictionary_action = self.create_tool_action("数据字典", "assets/icons/book.png", self.dictionary_dock)
+        self.tools_toolbar.addAction(dictionary_action)
+        
+        # --- 4. SQL实验室 ---
+        self.sql_lab_dock = self.create_dock("SQL实验室", self.sql_lab_tab, Qt.BottomDockWidgetArea)
+        sql_lab_action = self.create_tool_action("SQL实验室", "assets/icons/code.png", self.sql_lab_dock)
+        self.tools_toolbar.addAction(sql_lab_action)
+        
+        # 允许DockWidget堆叠和嵌套
+        self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks | QMainWindow.AllowNestedDocks)
+        # 将结构和字典默认组合在一个标签页里
+        self.tabifyDockWidget(self.structure_dock, self.dictionary_dock)
+
+    def create_dock(self, title, widget, area):
+        """辅助函数，用于创建和配置QDockWidget"""
+        dock = QDockWidget(title, self)
+        dock.setWidget(widget)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        dock.hide() # 默认隐藏
+        self.addDockWidget(area, dock)
+        return dock
+
+    def create_tool_action(self, text, icon_path, dock_widget):
+        """辅助函数，用于创建工具栏的QAction来切换Dock"""
+        action = QAction(QIcon(icon_path), text, self)
+        action.setCheckable(True)
+        action.toggled.connect(dock_widget.setVisible)
+        dock_widget.visibilityChanged.connect(action.setChecked)
+        return action
+
     def get_active_db_profile(self):
-        """Provides the currently active database profile instance to other components."""
         return self.active_db_profile
 
     def get_db_params(self):
-        """Provides the current database connection parameters."""
         return self.connection_tab.db_params if self.connection_tab.connected else None
 
     @Slot(str)
     def on_profile_changed(self, profile_name: str):
-        """Handles switching the active database profile."""
         profile_class = self.db_profiles.get(profile_name)
         if profile_class:
             self.active_db_profile = profile_class()
             self.setWindowTitle(f"{APP_NAME}: {self.active_db_profile.get_display_name()} - v{APP_VERSION}")
-            print(f"Active database profile changed to: {self.active_db_profile.get_display_name()}")
-
-            # Update connection tab with profile defaults
             self.connection_tab.set_default_params(self.active_db_profile.get_default_connection_params())
             
-            # Lock UI and prompt user to reconnect
             if self.connection_tab.connected:
                 self.connection_tab.reset_connection()
-                QMessageBox.information(self, "数据库已切换", 
-                                          "数据库类型已更改。请使用新的默认参数重新连接数据库。")
+                QMessageBox.information(self, "数据库已切换", "数据库类型已更改。请重新连接。")
 
-            # Notify all tabs that the profile has changed, so they can reconfigure themselves
-            for i in range(self.tabs.count()):
-                tab_widget = self.tabs.widget(i)
-                if hasattr(tab_widget, 'on_profile_changed'):
-                    tab_widget.on_profile_changed()
+            for page in self.all_pages:
+                if hasattr(page, 'on_profile_changed'):
+                    page.on_profile_changed()
         else:
             self.active_db_profile = None
 
     @Slot()
     def on_db_connected(self):
-        """Propagates the connected signal to all relevant tabs."""
-        print("Database connected signal received by main window.")
-        for i in range(self.tabs.count()):
-            tab_widget = self.tabs.widget(i)
-            if hasattr(tab_widget, 'on_db_connected'):
-                print(f"Calling on_db_connected for tab: {tab_widget.__class__.__name__}")
-                tab_widget.on_db_connected()
+        for page in self.all_pages:
+            if hasattr(page, 'on_db_connected'):
+                page.on_db_connected()
+
+    @Slot(str, str)
+    def handle_special_data_preview(self, schema_name, table_name):
+        self.main_tabs.setCurrentWidget(self.data_export_tab)
+        self.data_export_tab.preview_specific_table(schema_name, table_name)
 
     @Slot(str, str)
     def handle_structure_table_preview(self, schema_name, table_name):
-        export_tab_index = -1
-        for i in range(self.tabs.count()):
-            if isinstance(self.tabs.widget(i), DataExportTab):
-                export_tab_index = i
-                break
+        self.main_tabs.setCurrentWidget(self.data_export_tab)
+        if self.connection_tab.connected and not self.data_export_tab.refresh_btn.isEnabled():
+            self.data_export_tab.on_db_connected()
+            QApplication.processEvents()
+        self.data_export_tab.preview_specific_table(schema_name, table_name)
+    
+    @Slot(str)
+    def handle_send_to_sql_lab(self, sql_query: str):
+        if not self.sql_lab_dock.isVisible():
+            self.sql_lab_dock.show()
+        self.sql_lab_dock.raise_()
+        self.sql_lab_tab.sql_editor.setText(sql_query)
+        self.sql_lab_tab.execute_sql()
         
-        if export_tab_index != -1:
-            self.tabs.setCurrentIndex(export_tab_index)
-            if self.connection_tab.connected and not self.data_export_tab.refresh_btn.isEnabled():
-                self.data_export_tab.on_db_connected()
-                QApplication.processEvents()
-            self.data_export_tab.preview_specific_table(schema_name, table_name)
-        else:
-            QMessageBox.warning(self, "错误", "无法找到数据导出标签页。")
-
     def closeEvent(self, event):
-        tabs_with_workers = [
-            self.query_cohort_tab,
-            self.data_extraction_tab,
-            self.special_data_master_tab
-        ]
-
-        for tab_instance in tabs_with_workers:
-            # This logic assumes worker thread attributes are consistently named.
-            # A more robust solution might be a common interface for tabs with workers.
-            worker_thread_attr_name = None
+        active_workers_pages = [p for p in self.all_pages if hasattr(p, 'worker_thread') or hasattr(p, 'cohort_worker_thread')]
+        for tab_instance in active_workers_pages:
+            worker_thread_attr_name = 'worker_thread' if hasattr(tab_instance, 'worker_thread') else 'cohort_worker_thread'
             worker_obj_attr_name = None
-
-            if hasattr(tab_instance, 'cohort_worker_thread'):
-                worker_thread_attr_name = 'cohort_worker_thread'
-                worker_obj_attr_name = 'cohort_worker'
-            elif hasattr(tab_instance, 'worker_thread'):
-                worker_thread_attr_name = 'worker_thread'
-                if hasattr(tab_instance, 'worker'):
-                     worker_obj_attr_name = 'worker'
-                elif hasattr(tab_instance, 'merge_worker'):
-                     worker_obj_attr_name = 'merge_worker'
+            if hasattr(tab_instance, 'worker'): worker_obj_attr_name = 'worker'
+            elif hasattr(tab_instance, 'merge_worker'): worker_obj_attr_name = 'merge_worker'
+            elif hasattr(tab_instance, 'cohort_worker'): worker_obj_attr_name = 'cohort_worker'
             
-            if worker_thread_attr_name and worker_obj_attr_name:
+            if worker_obj_attr_name:
                 thread = getattr(tab_instance, worker_thread_attr_name, None)
                 worker = getattr(tab_instance, worker_obj_attr_name, None)
                 
                 if thread and thread.isRunning():
-                    print(f"Attempting to stop worker in {tab_instance.__class__.__name__} on close...")
+                    print(f"Stopping worker in {tab_instance.__class__.__name__}...")
                     if worker and hasattr(worker, 'cancel'):
                         worker.cancel()
                     thread.quit()
-                    if not thread.wait(1500):
-                        print(f"Warning: Worker thread in {tab_instance.__class__.__name__} did not quit in time.")
+                    if not thread.wait(1000):
+                        print(f"Warning: Worker thread in {tab_instance.__class__.__name__} did not quit gracefully.")
                         
         super().closeEvent(event)
 

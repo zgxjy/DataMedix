@@ -6,6 +6,7 @@ import psycopg2
 
 class StructureTab(QWidget):
     request_table_preview_signal = Signal(str, str) # schema_name, table_name
+    request_send_to_sql_lab_signal = Signal(str) # <<< 新增信号
 
     def __init__(self, get_db_params_func, parent=None):
         super().__init__(parent)
@@ -98,30 +99,32 @@ class StructureTab(QWidget):
     @Slot(object)
     def show_context_menu(self, position):
         item = self.tree.itemAt(position)
-        if not item:
-            return
+        if not item: return
 
         item_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not (item_data and isinstance(item_data, tuple) and len(item_data) == 2):
+            return
 
-        if item_data and isinstance(item_data, tuple) and len(item_data) == 2:
-            schema_name, table_name = item_data
-            
-            menu = QMenu()
-            preview_action = menu.addAction(f"预览数据: {schema_name}.{table_name}")
-            
-            # Allow deletion only from a specific, non-standard schema (e.g., our generated data schema)
-            # This is a safety measure. The schema name itself could come from the profile.
-            if schema_name.endswith('_data'):
-                delete_action = menu.addAction(f"删除表: {schema_name}.{table_name}")
-                action = menu.exec(self.tree.viewport().mapToGlobal(position))
-                if action == preview_action:
-                    self.request_table_preview_signal.emit(schema_name, table_name)
-                elif action == delete_action:
-                    self.confirm_delete_table(schema_name, table_name)
-            else:
-                action = menu.exec(self.tree.viewport().mapToGlobal(position))
-                if action == preview_action:
-                    self.request_table_preview_signal.emit(schema_name, table_name)
+        schema_name, table_name = item_data
+        full_table_name = f"{schema_name}.{table_name}"
+        
+        menu = QMenu()
+        preview_action = menu.addAction(f"在导出页预览: {full_table_name}")
+        
+        # 新增的联动菜单项
+        sql_lab_preview_action = menu.addAction(f"在SQL实验室中预览")
+        sql_lab_count_action = menu.addAction(f"在SQL实验室中统计行数")
+        
+        action = menu.exec(self.tree.viewport().mapToGlobal(position))
+
+        if action == preview_action:
+            self.request_table_preview_signal.emit(schema_name, table_name)
+        elif action == sql_lab_preview_action:
+            sql = f"SELECT * FROM {full_table_name} LIMIT 100;"
+            self.request_send_to_sql_lab_signal.emit(sql) # <<< 发出信号
+        elif action == sql_lab_count_action:
+            sql = f"SELECT COUNT(*) FROM {full_table_name};"
+            self.request_send_to_sql_lab_signal.emit(sql) # <<< 发出信号
 
     def confirm_delete_table(self, schema_name, table_name):
         reply = QMessageBox.question(self, '确认删除',

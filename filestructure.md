@@ -21,19 +21,32 @@
 │           ├── labevents_panel.py
 │           ├── medication_panel.py
 │           └── procedure_panel.py
+│   └── eicu/
+│       ├── __init__.py
+│       ├── base_info_modules.py
+│       ├── profile.py
+│       └── panels/
+│           ├── __init__.py
+│           ├── diagnosis_panel.py
+│           ├── infusiondrug_panel.py
+│           ├── lab_panel.py
+│           ├── medication_panel.py
+│           ├── nursecharting_panel.py
+│           ├── treatment_panel.py
+│           └── vitalperiodic_panel.py
 ├── sql_logic/
 │   ├── __init__.py
 │   └── sql_builder_special.py
 ├── tabs/
 │   ├── __init__.py
-│   ├── tab_combine_base_info.py ✅
-│   ├── tab_connection.py  ✅
-│   ├── tab_data_dictionary.py✅
-│   ├── tab_data_export.py✅
-│   ├── tab_data_merge.py✅
-│   ├── tab_query_cohort.py✅
-│   ├── tab_special_data_master.py✅
-│   └── tab_structure.py✅
+│   ├── tab_combine_base_info.py 
+│   ├── tab_connection.py  
+│   ├── tab_data_dictionary.py
+│   ├── tab_data_export.py
+│   ├── tab_data_merge.py
+│   ├── tab_query_cohort.py
+│   ├── tab_special_data_master.py
+│   └── tab_structure.py
 ├── tests/
 │   ├── __init__.py
 │   ├── test_sql_builder_special.py
