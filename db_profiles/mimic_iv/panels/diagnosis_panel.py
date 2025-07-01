@@ -31,6 +31,7 @@ class DiagnosisConfigPanel(BaseSourceConfigPanel):
 
         filter_action_layout = QHBoxLayout() 
         filter_action_layout.addStretch() 
+                
         self.filter_items_btn = QPushButton("筛选指标项目") 
         self.filter_items_btn.clicked.connect(self._filter_items_action)
         filter_action_layout.addWidget(self.filter_items_btn)

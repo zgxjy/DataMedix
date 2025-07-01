@@ -128,10 +128,10 @@ class EICUProfile(BaseDbProfile):
             'DEFAULT_TIME_COLUMN': 'labresultoffset',
         }
 
-    def get_cohort_join_key(self) -> str:
-        # e-ICU的队列主键总是 patientunitstayid
-        return "patientunitstayid"
-
     def get_event_table_join_key(self, event_table_name: str) -> str:
         # e-ICU的所有事件表都用 patientunitstayid 连接
+        return "patientunitstayid"
+
+    def get_cohort_join_key(self, event_table_name: str) -> str:
+        # e-ICU的队列主键总是 patientunitstayid，忽略事件表名
         return "patientunitstayid"

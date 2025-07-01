@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QMessageBox, QVBoxLayout, QWidget, 
     QHBoxLayout, QComboBox, QLabel, QDockWidget, QToolBar
 )
-from PySide6.QtCore import Slot, Qt, Signal
+from PySide6.QtCore import Qt, Slot, QThread, Signal
 from PySide6.QtGui import QIcon, QAction
 
 # 导入所有 Profile
@@ -53,7 +53,7 @@ class MedicalDataExtractor(QMainWindow):
         
         # 实例化辅助工具页面
         self.data_merge_tab = DataMergeTab()
-        self.structure_tab = StructureTab(self.get_db_params)
+        self.structure_tab = StructureTab(self.get_db_params, self.get_current_db_profile)
         self.data_dictionary_tab = DataDictionaryTab(self.get_db_params, self.get_active_db_profile)
         self.sql_lab_tab = SqlLabTab(self.get_db_params, self)
 
@@ -74,8 +74,6 @@ class MedicalDataExtractor(QMainWindow):
         self.profile_combo.currentTextChanged.connect(self.on_profile_changed)
         self.connection_tab.connected_signal.connect(self.on_db_connected)
         self.special_data_master_tab.request_preview_signal.connect(self.handle_special_data_preview)
-        
-        # 联动信号连接
         self.structure_tab.request_table_preview_signal.connect(self.handle_structure_table_preview)
         self.structure_tab.request_send_to_sql_lab_signal.connect(self.handle_send_to_sql_lab)
 
@@ -162,6 +160,9 @@ class MedicalDataExtractor(QMainWindow):
     def get_db_params(self):
         return self.connection_tab.db_params if self.connection_tab.connected else None
 
+    def get_current_db_profile(self):
+        return self.active_db_profile
+
     @Slot(str)
     def on_profile_changed(self, profile_name: str):
         profile_class = self.db_profiles.get(profile_name)
@@ -208,25 +209,29 @@ class MedicalDataExtractor(QMainWindow):
         self.sql_lab_tab.execute_sql()
         
     def closeEvent(self, event):
-        active_workers_pages = [p for p in self.all_pages if hasattr(p, 'worker_thread') or hasattr(p, 'cohort_worker_thread')]
+        # 查找所有包含正在运行的QThread的页面
+        active_workers_pages = [
+            p for p in self.all_pages 
+            if any(isinstance(getattr(p, attr, None), QThread) and getattr(p, attr).isRunning() for attr in dir(p))
+        ]
+        
         for tab_instance in active_workers_pages:
-            worker_thread_attr_name = 'worker_thread' if hasattr(tab_instance, 'worker_thread') else 'cohort_worker_thread'
-            worker_obj_attr_name = None
-            if hasattr(tab_instance, 'worker'): worker_obj_attr_name = 'worker'
-            elif hasattr(tab_instance, 'merge_worker'): worker_obj_attr_name = 'merge_worker'
-            elif hasattr(tab_instance, 'cohort_worker'): worker_obj_attr_name = 'cohort_worker'
+            print(f"Stopping worker in {tab_instance.__class__.__name__}...")
+            # 找到worker对象 (通常与线程名相关)
+            worker_obj = None
+            if hasattr(tab_instance, 'worker'): worker_obj = tab_instance.worker
+            elif hasattr(tab_instance, 'cohort_worker'): worker_obj = tab_instance.cohort_worker
+            elif hasattr(tab_instance, 'merge_worker'): worker_obj = tab_instance.merge_worker
             
-            if worker_obj_attr_name:
-                thread = getattr(tab_instance, worker_thread_attr_name, None)
-                worker = getattr(tab_instance, worker_obj_attr_name, None)
-                
-                if thread and thread.isRunning():
-                    print(f"Stopping worker in {tab_instance.__class__.__name__}...")
-                    if worker and hasattr(worker, 'cancel'):
-                        worker.cancel()
+            # 找到正在运行的线程并停止它
+            for attr_name in dir(tab_instance):
+                thread = getattr(tab_instance, attr_name)
+                if isinstance(thread, QThread) and thread.isRunning():
+                    if worker_obj and hasattr(worker_obj, 'cancel'):
+                        worker_obj.cancel()
                     thread.quit()
-                    if not thread.wait(1000):
-                        print(f"Warning: Worker thread in {tab_instance.__class__.__name__} did not quit gracefully.")
+                    if not thread.wait(1000): # 等待1秒
+                        print(f"Warning: Worker thread '{attr_name}' in {tab_instance.__class__.__name__} did not quit gracefully.")
                         
         super().closeEvent(event)
 

@@ -55,20 +55,14 @@ class BaseDbProfile(ABC):
         """返回用于存放生成队列的schema名称。"""
         pass
 
-    def get_profile_constants(self) -> Dict[str, Any]:
-        """返回一个字典，包含此数据库画像中常用的常量。"""
-        return {}
-
-    # --- 新增的抽象方法 ---
-
     @abstractmethod
-    def get_cohort_join_key(self) -> str:
+    def get_cohort_join_key(self, event_table_name: str) -> str:
         """
         返回在专项数据提取时，用于连接【目标队列数据表】的主键名称。
         
-        - 对于MIMIC-IV，这通常是 'stay_id' 或 'hadm_id'，取决于JOIN的级别。
-          可以返回一个最通用的键，如 'hadm_id'。
-        - 对于e-ICU，这总是 'patientunitstayid'。
+        Args:
+            event_table_name (str): 正在被查询的事件表的名称，以便决定使用哪个键。
+        ...
         """
         pass
 

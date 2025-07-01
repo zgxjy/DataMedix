@@ -8,9 +8,10 @@ class StructureTab(QWidget):
     request_table_preview_signal = Signal(str, str) # schema_name, table_name
     request_send_to_sql_lab_signal = Signal(str) # <<< 新增信号
 
-    def __init__(self, get_db_params_func, parent=None):
+    def __init__(self, get_db_params_func, get_db_profile_func, parent=None):
         super().__init__(parent)
         self.get_db_params = get_db_params_func
+        self.get_db_profile = get_db_profile_func
         self.init_ui()
 
     def init_ui(self):
@@ -111,20 +112,30 @@ class StructureTab(QWidget):
         menu = QMenu()
         preview_action = menu.addAction(f"在导出页预览: {full_table_name}")
         
-        # 新增的联动菜单项
         sql_lab_preview_action = menu.addAction(f"在SQL实验室中预览")
         sql_lab_count_action = menu.addAction(f"在SQL实验室中统计行数")
         
+        delete_action = None
+        db_profile = self.get_db_profile()
+        if db_profile:
+            cohort_schema = db_profile.get_cohort_table_schema()
+            # 只有当表在队列schema内，并且名字里包含 '_cohort'，才认为它可以被删除
+            if schema_name == cohort_schema :
+                menu.addSeparator()
+                delete_action = menu.addAction(f"删除队列数据表: {full_table_name}")
+
         action = menu.exec(self.tree.viewport().mapToGlobal(position))
 
         if action == preview_action:
             self.request_table_preview_signal.emit(schema_name, table_name)
         elif action == sql_lab_preview_action:
             sql = f"SELECT * FROM {full_table_name} LIMIT 100;"
-            self.request_send_to_sql_lab_signal.emit(sql) # <<< 发出信号
+            self.request_send_to_sql_lab_signal.emit(sql)
         elif action == sql_lab_count_action:
             sql = f"SELECT COUNT(*) FROM {full_table_name};"
-            self.request_send_to_sql_lab_signal.emit(sql) # <<< 发出信号
+            self.request_send_to_sql_lab_signal.emit(sql)
+        elif action and action == delete_action:
+            self.confirm_delete_table(schema_name, table_name)
 
     def confirm_delete_table(self, schema_name, table_name):
         reply = QMessageBox.question(self, '确认删除',

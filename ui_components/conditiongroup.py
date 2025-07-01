@@ -47,6 +47,9 @@ class ConditionGroupWidget(QWidget):
 
         self.add_keyword_btn = QPushButton("添加关键词条件") # 文本稍作修改
         self.add_group_btn = QPushButton("添加子组条件")   # 文本稍作修改
+        self.reset_btn = QPushButton("重置条件")
+        self.reset_btn.clicked.connect(self.clear_all)
+        logic_layout.addWidget(self.reset_btn)
         logic_layout.addWidget(self.add_keyword_btn)
         logic_layout.addWidget(self.add_group_btn)
 
@@ -422,5 +425,32 @@ class ConditionGroupWidget(QWidget):
         finally:
             self._block_signals = False
         self._emit_condition_changed()
+
+    def clear_all(self):
+        """
+        递归地清除所有关键词行、子组，并将根节点重置为包含一个空行。
+        """
+        self._block_signals = True  # 阻止在清除过程中触发大量信号
+
+        # 从后往前遍历并删除，避免索引问题
+        for kw_data in reversed(self.keywords):
+            self.remove_keyword(kw_data)
+        
+        for child_group in reversed(self.child_groups):
+            child_group.delete_self() # delete_self 会处理从父节点移除和删除自身
+
+        # 清空列表以防万一
+        self.keywords.clear()
+        self.child_groups.clear()
+
+        # 如果是根节点，我们希望它保留一个空的关键词行
+        if self.is_root:
+            self.add_keyword()
+        
+        # 重置逻辑操作符
+        self.logic_combo.setCurrentIndex(0) # 默认为 AND
+
+        self._block_signals = False
+        self._emit_condition_changed() # 最后触发一次信号，通知外部UI更新
 
 # --- END OF PROPOSED MODIFICATION FOR conditiongroup.py ---

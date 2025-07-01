@@ -19,7 +19,7 @@ class MIMICIVProfile(BaseDbProfile):
 
     def get_default_connection_params(self) -> Dict[str, str]:
         return {
-            "dbname": "mimiciv3",
+            "dbname": "mimiciv",
             "user": "postgres",
         }
 
@@ -122,22 +122,34 @@ class MIMICIVProfile(BaseDbProfile):
             'DEFAULT_TIME_COLUMN': "charttime",
         }
 
-    def get_cohort_join_key(self) -> str:
-        # MIMIC-IV的队列总是有 stay_id 和 hadm_id，但专项数据JOIN时需要区分
-        # 这里我们返回一个基础的，具体JOIN时再细化
-        return "stay_id" # 假设ICU stay是更常用的
-
-    def get_event_table_join_key(self, event_table_name: str) -> str:
-        # 根据事件表决定连接键
+    def get_cohort_join_key(self, event_table_name: str) -> str:
+        # 根据事件表的级别，决定队列表应该用哪个键去连接
+        # 如果事件表是 ICU 级别的 (如 chartevents)，队列表就用 stay_id
         if 'chartevents' in event_table_name:
             return 'stay_id'
-        # 对于 hospital-level 的事件，使用 hadm_id
+        # 如果事件表是住院级别的，队列表就用 hadm_id
         elif 'labevents' in event_table_name or \
              'prescriptions' in event_table_name or \
              'procedures_icd' in event_table_name or \
-             'diagnoses_icd' in event_table_name:
+             'diagnoses_icd' in event_table_name or \
+             'note' in event_table_name:
             return 'hadm_id'
-        # note_events 比较特殊，它同时有 hadm_id
-        elif 'note' in event_table_name:
+        # 默认或未知情况，返回一个通用键，但这应该很少发生
+        return 'hadm_id'
+        
+    def get_event_table_join_key(self, event_table_name: str) -> str:
+        """
+        根据事件表决定连接键。
+        """
+        # ICU 级别的事件表
+        if 'chartevents' in event_table_name:
+            return 'stay_id'
+        # 住院级别的事件表
+        elif 'labevents' in event_table_name or \
+             'prescriptions' in event_table_name or \
+             'procedures_icd' in event_table_name or \
+             'diagnoses_icd' in event_table_name or \
+             'note' in event_table_name:
             return 'hadm_id'
-        return 'stay_id' # 默认返回 stay_id
+        # 默认返回一个最不可能出错的键，但理想情况下所有支持的表都应被覆盖
+        return 'hadm_id'

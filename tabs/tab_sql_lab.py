@@ -268,8 +268,8 @@ class SqlLabTab(QWidget):
             self.result_table.setModel(None)
         else:
             QApplication.restoreOverrideCursor()
-            self.worker = None
-            self.worker_thread = None
+            # self.worker = None
+            # self.worker_thread = None
 
     @Slot(object, float)
     def on_query_finished(self, df, duration):
