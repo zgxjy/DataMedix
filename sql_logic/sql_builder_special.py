@@ -184,7 +184,7 @@ def build_special_data_sql(
                 sql_template = SQL_AGGREGATES.get(method_key)
                 if not sql_template: continue
                 col_type = AGGREGATE_RESULT_TYPES.get(method_key, "NUMERIC")
-                if is_text_extraction and method_key in ["MIN", "MAX", "NOTE_CONCAT", "NOTE_FIRST", "NOTE_LAST"]: col_type = "TEXT"
+                if is_text_extraction and method_key in ["MIN", "MAX", "NOTE_CONCAT", "NOTE_FIRST", "FIRST_VALUE", "LAST_VALUE","NOTE_LAST"]: col_type = "TEXT"
                 final_col_name = f"{base_new_column_name}_{method_key.lower()}"
                 is_valid, err = validate_column_name(final_col_name)
                 if not is_valid: return None, f"生成的列名 '{final_col_name}' 无效: {err}", [], []
@@ -229,16 +229,15 @@ def build_special_data_sql(
 
         # --- 核心修复：定义 event_value 列的表达式 ---
         event_value_expression = psql.Identifier('event_value') # 默认为 event_value 列
-        # 特殊处理 eICU 的 nursecharting 表，它的数值列是文本类型
-        is_eicu_nursecharting_numeric = (
+        is_eicu_text_to_numeric_cast_needed = (
             _is_eicu_profile(db_profile) and
-            source_event_table == "public.nursecharting" and
-            not is_text_extraction
+            source_event_table in ["public.nursecharting", "public.infusiondrug"] and # <-- 添加 infusiondrug
+            not is_text_extraction # 仅对数值聚合模式生效
         )
-        if is_eicu_nursecharting_numeric:
-            # 当需要进行数学运算时，必须将文本类型的 nursingchartvalue 转换为数值
+        
+        # 如果需要转换，则重写值的表达式
+        if is_eicu_text_to_numeric_cast_needed:
             event_value_expression = psql.SQL("CAST(NULLIF(event_value, '') AS NUMERIC)")
-        # --- 修复结束 ---
 
         if isinstance(agg_template_or_tuple, tuple):
             # 处理正则表达式等特殊情况

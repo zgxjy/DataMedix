@@ -18,7 +18,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
         panel_layout.setContentsMargins(0,0,0,0)
         panel_layout.setSpacing(10)
 
-        filter_group = QGroupBox("筛选化验项目 (来自 public.lab)")
+        filter_group = QGroupBox("1. 筛选化验项目 (来自 public.lab)")
         filter_layout = QVBoxLayout(filter_group)
         self.condition_widget = ConditionGroupWidget(is_root=True)
         self.condition_widget.condition_changed.connect(self.config_changed_signal.emit)
@@ -30,7 +30,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.filter_items_btn = QPushButton("筛选项目")
+        self.filter_items_btn = QPushButton("筛选化验项目")
         self.filter_items_btn.clicked.connect(self._filter_items_action)
         btn_layout.addWidget(self.filter_items_btn)
         filter_layout.addLayout(btn_layout)
