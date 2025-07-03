@@ -96,7 +96,7 @@ class LabeventsConfigPanel(BaseSourceConfigPanel):
         self.condition_widget.set_available_search_fields(available_fields)
         
         value_agg_time_window_options = [
-            "ICU入住后24小时", "ICU入住后48小时", "整个ICU期间", "整个住院期间"
+            "ICU入住24小时内", "ICU入住48小时内", "整个ICU期间", "整个住院期间"
         ]
         self.time_window_widget.set_options(value_agg_time_window_options)
 

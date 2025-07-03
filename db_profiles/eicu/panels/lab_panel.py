@@ -50,7 +50,7 @@ class EicuLabPanel(BaseSourceConfigPanel):
         logic_layout.addWidget(self.value_agg_widget)
         
         self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口 (相对于ICU入院):")
-        self.time_window_widget.time_window_changed.connect(self.config_changed_signal.emit)
+        self.time_window_widget.time_window_changed.connect(lambda: self.config_changed_signal.emit())
         logic_layout.addWidget(self.time_window_widget)
         
         panel_layout.addWidget(logic_group)
@@ -64,8 +64,8 @@ class EicuLabPanel(BaseSourceConfigPanel):
             ("labmeasurenameinterface", "测量单位 (Measure Name)")
         ])
         self.time_window_widget.set_options([
-            "ICU入院后24小时 (0-1440分钟)",
-            "ICU入院后48小时 (0-2880分钟)",
+            "ICU入住24小时内",
+            "ICU入住48小时内",
             "整个ICU期间",
         ])
 

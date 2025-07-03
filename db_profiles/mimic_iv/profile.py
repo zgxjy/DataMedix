@@ -8,7 +8,7 @@ from .panels.labevents_panel import LabeventsConfigPanel
 from .panels.medication_panel import MedicationConfigPanel
 from .panels.procedure_panel import ProcedureConfigPanel
 from .panels.diagnosis_panel import DiagnosisConfigPanel
-from .panels.note_events_panel import NoteEventsPanel
+from .panels.preprocessed_note_panel import PreprocessedNotePanel
 from . import base_info_modules as mimic_base_info
 
 class MIMICIVProfile(BaseDbProfile):
@@ -33,7 +33,7 @@ class MIMICIVProfile(BaseDbProfile):
             ("用药 (prescriptions)", MedicationConfigPanel),
             ("操作/手术 (procedures_icd)", ProcedureConfigPanel),
             ("诊断 (diagnoses_icd)", DiagnosisConfigPanel),
-            ("临床笔记 (note)", NoteEventsPanel),
+            ("临床笔记预处理 (note)", PreprocessedNotePanel),
         ]
 
     def get_base_info_modules(self) -> List[Tuple[str, str, Callable]]:
@@ -135,7 +135,7 @@ class MIMICIVProfile(BaseDbProfile):
         # 根据事件表的级别，决定队列表应该用哪个键去连接
         # 如果事件表是 ICU 级别的 (如 chartevents)，队列表就用 stay_id
         if 'chartevents' in event_table_name:
-            return 'stay_id'
+            return 'hadm_id'
         # 如果事件表是住院级别的，队列表就用 hadm_id
         elif 'labevents' in event_table_name or \
              'prescriptions' in event_table_name or \
@@ -152,7 +152,7 @@ class MIMICIVProfile(BaseDbProfile):
         """
         # ICU 级别的事件表
         if 'chartevents' in event_table_name:
-            return 'stay_id'
+            return 'hadm_id'
         # 住院级别的事件表
         elif 'labevents' in event_table_name or \
              'prescriptions' in event_table_name or \

@@ -1,100 +1,209 @@
-# --- START OF FILE db_profiles/eicu/panels/nursecharting_panel.py ---
-from PySide6.QtWidgets import (QVBoxLayout, QGroupBox, QComboBox, QHBoxLayout, 
-                               QLabel, QRadioButton, QButtonGroup, QStackedWidget)
+# --- START OF NEW FILE: db_profiles/eicu/panels/nursecharting_panel.py ---
+from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton,
+                               QListWidget, QListWidgetItem, QAbstractItemView, QTextEdit,
+                               QApplication, QGroupBox, QLabel, QMessageBox, QScrollArea, QFrame,
+                               QRadioButton, QButtonGroup, QComboBox)
+from PySide6.QtCore import Qt, Slot
+import psycopg2.sql as pgsql
+import traceback
 from typing import Optional
 
 from ui_components.base_panel import BaseSourceConfigPanel
+from ui_components.conditiongroup import ConditionGroupWidget
 from ui_components.value_aggregation_widget import ValueAggregationWidget
 from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 
 class EicuNurseChartingPanel(BaseSourceConfigPanel):
-    """用于配置从 public.nursecharting 表提取数据的面板。"""
-
     def init_panel_ui(self):
         panel_layout = QVBoxLayout(self)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(10)
 
-        filter_group = QGroupBox("筛选护理记录项 (public.nursecharting)")
-        filter_layout = QHBoxLayout(filter_group)
-        filter_layout.addWidget(QLabel("护理记录项:"))
-        self.item_combo = QComboBox()
-        items = ["GCS Total", "Heart Rate", "MAP", "O2 Saturation", "Respiratory Rate", "Pain Score"]
-        self.item_combo.addItems(sorted(items))
-        self.item_combo.currentTextChanged.connect(self.config_changed_signal.emit)
-        filter_layout.addWidget(self.item_combo)
-        panel_layout.addWidget(filter_group)
+        # 1. 筛选项目
+        filter_group = QGroupBox("1. 筛选护理项目 (来自 public.nursecharting)")
+        filter_group_layout = QVBoxLayout(filter_group)
         
-        logic_group = QGroupBox("提取逻辑")
+        self.condition_widget = ConditionGroupWidget(is_root=True)
+        self.condition_widget.condition_changed.connect(self.config_changed_signal.emit)
+        cg_scroll = QScrollArea()
+        cg_scroll.setWidgetResizable(True)
+        cg_scroll.setWidget(self.condition_widget)
+        cg_scroll.setMinimumHeight(150)
+        filter_group_layout.addWidget(cg_scroll)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.filter_items_btn = QPushButton("筛选项目")
+        self.filter_items_btn.clicked.connect(self._filter_items_action)
+        btn_layout.addWidget(self.filter_items_btn)
+        filter_group_layout.addLayout(btn_layout)
+
+        filter_group_layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine, frameShadow=QFrame.Shadow.Sunken))
+
+        self.item_list = QListWidget()
+        self.item_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.item_list.itemSelectionChanged.connect(self._on_item_selection_changed)
+        item_list_scroll = QScrollArea()
+        item_list_scroll.setWidgetResizable(True)
+        item_list_scroll.setWidget(self.item_list)
+        item_list_scroll.setMinimumHeight(150)
+        filter_group_layout.addWidget(item_list_scroll)
+        
+        self.selected_items_label = QLabel("已选项目: 0")
+        filter_group_layout.addWidget(self.selected_items_label, alignment=Qt.AlignmentFlag.AlignRight)
+        panel_layout.addWidget(filter_group)
+
+        # 2. 提取逻辑
+        logic_group = QGroupBox("2. 配置提取逻辑")
         logic_layout = QVBoxLayout(logic_group)
 
-        self.value_source_group = QButtonGroup(self)
+        # 2.1 选择值来源
         value_source_layout = QHBoxLayout()
         value_source_layout.addWidget(QLabel("提取值来源:"))
+        self.value_source_group = QButtonGroup(self)
         self.rb_value_numeric = QRadioButton("数值 (nursingchartvalue)")
         self.rb_value_text = QRadioButton("文本 (nursingchartcelltypevalname)")
         self.rb_value_numeric.setChecked(True)
-        self.value_source_group.addButton(self.rb_value_numeric)
-        self.value_source_group.addButton(self.rb_value_text)
+        self.value_source_group.addButton(self.rb_value_numeric, 1)
+        self.value_source_group.addButton(self.rb_value_text, 2)
         value_source_layout.addWidget(self.rb_value_numeric)
         value_source_layout.addWidget(self.rb_value_text)
         value_source_layout.addStretch()
-        logic_layout.addLayout(value_source_layout)
         self.value_source_group.buttonClicked.connect(self._on_value_source_changed)
+        logic_layout.addLayout(value_source_layout)
 
+        # 2.2 聚合方法
         self.value_agg_widget = ValueAggregationWidget()
         self.value_agg_widget.aggregation_changed.connect(self.config_changed_signal.emit)
         logic_layout.addWidget(self.value_agg_widget)
         
+        # 2.3 时间窗口
         self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口 (相对于ICU入院):")
-        self.time_window_widget.time_window_changed.connect(self.config_changed_signal.emit)
+        self.time_window_widget.time_window_changed.connect(lambda: self.config_changed_signal.emit())
         logic_layout.addWidget(self.time_window_widget)
         
         panel_layout.addWidget(logic_group)
         self.setLayout(panel_layout)
         
+        # 初始化UI状态
         self._on_value_source_changed()
 
-    def _on_value_source_changed(self):
-        is_text_mode = self.rb_value_text.isChecked()
-        self.value_agg_widget.set_text_mode(is_text_mode)
-        self.config_changed_signal.emit()
-
     def populate_panel_if_needed(self):
+        # eICU nursecharting 没有字典表，所以筛选字段就是表自身的列
+        self.condition_widget.set_available_search_fields([
+            ("nursingchartcelltypevallabel", "标签 (Label)"),
+            ("nursingchartcelltypecat", "类别 (Category)"),
+            ("nursingchartcelltypevalname", "值名称 (Value Name)")
+        ])
         self.time_window_widget.set_options([
-            "ICU入院后24小时 (0-1440分钟)",
-            "ICU入院后48小时 (0-2880分钟)",
+            "ICU入住24小时内",
+            "ICU入住48小时内",
             "整个ICU期间",
         ])
 
     def get_friendly_source_name(self) -> str:
         return "e-ICU 护理记录 (nursecharting)"
 
-    def get_panel_config(self) -> dict:
-        selected_item = self.item_combo.currentText()
-        if not selected_item: return {}
-        
-        is_text_mode = self.rb_value_text.isChecked()
-        value_col = "nursingchartcelltypevalname" if is_text_mode else "nursingchartvalue"
-        
-        return {
-            "source_event_table": "public.nursecharting",
-            "item_id_column_in_event_table": "nursingchartcelltypecat",
-            "selected_item_ids": [selected_item],
-            "value_column_to_extract": value_col,
-            "time_column_in_event_table": "nursingchartoffset",
-            "aggregation_methods": self.value_agg_widget.get_selected_methods(),
-            "event_outputs": {},
-            "time_window_text": self.time_window_widget.get_current_time_window_text(),
-            "primary_item_label_for_naming": selected_item,
-            "is_text_extraction": is_text_mode,
-            "cte_join_on_cohort_override": None,
-        }
-
     def clear_panel_state(self):
-        self.item_combo.setCurrentIndex(0)
+        self.condition_widget.clear_all()
+        self.item_list.clear()
+        self.selected_items_label.setText("已选项目: 0")
         self.rb_value_numeric.setChecked(True)
         self._on_value_source_changed()
         self.value_agg_widget.clear_selections()
         if self.time_window_widget.combo_box.count() > 0:
             self.time_window_widget.combo_box.setCurrentIndex(0)
+
+    def get_panel_config(self) -> dict:
+        selected_ids = self.get_selected_item_ids()
+        is_text_mode = self.rb_value_text.isChecked()
+        value_col = "nursingchartcelltypevalname" if is_text_mode else "nursingchartvalue"
+        
+        # 只有选择了项目并且选择了至少一个聚合方法，配置才有效
+        aggregation_methods = self.value_agg_widget.get_selected_methods()
+        if not selected_ids or not any(aggregation_methods.values()):
+            return {}
+
+        return {
+            "source_event_table": "public.nursecharting",
+            "item_id_column_in_event_table": "nursingchartcelltypevallabel", # 使用标签作为筛选ID
+            "selected_item_ids": selected_ids,
+            "value_column_to_extract": value_col,
+            "time_column_in_event_table": "nursingchartoffset",
+            "aggregation_methods": aggregation_methods,
+            "is_text_extraction": is_text_mode,
+            "event_outputs": {},
+            "time_window_text": self.time_window_widget.get_current_time_window_text(),
+            "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
+            "cte_join_on_cohort_override": None,
+        }
+
+    def _get_primary_item_label_for_naming(self) -> Optional[str]:
+        if self.item_list.selectedItems():
+            return self.item_list.selectedItems()[0].text()
+        return None
+
+    @Slot()
+    def _on_value_source_changed(self):
+        is_text_mode = self.rb_value_text.isChecked()
+        self.value_agg_widget.set_text_mode(is_text_mode)
+        self.config_changed_signal.emit()
+
+    def _on_item_selection_changed(self):
+        count = len(self.item_list.selectedItems())
+        self.selected_items_label.setText(f"已选项目: {count}")
+        self.config_changed_signal.emit()
+
+    @Slot()
+    def _filter_items_action(self):
+        if not self._connect_panel_db():
+            QMessageBox.warning(self, "数据库连接失败", "无法连接数据库以筛选项目。")
+            return
+
+        self.item_list.clear()
+        self.item_list.addItem("正在查询...")
+        self.filter_items_btn.setEnabled(False)
+        QApplication.processEvents()
+        
+        condition_sql_template, condition_params = self.condition_widget.get_condition()
+        if not condition_sql_template:
+            self.item_list.clear()
+            self.item_list.addItem("请输入筛选条件。")
+            self.filter_items_btn.setEnabled(True)
+            self._close_panel_db()
+            return
+
+        try:
+            # 查询 nursecharting 表中所有不重复的标签 (label)
+            query = pgsql.SQL("SELECT DISTINCT nursingchartcelltypevallabel FROM public.nursecharting WHERE {cond} ORDER BY nursingchartcelltypevallabel LIMIT 500").format(
+                cond=pgsql.SQL(condition_sql_template)
+            )
+            self._db_cursor.execute(query, condition_params)
+            items = self._db_cursor.fetchall()
+            
+            self.item_list.clear()
+            if items:
+                for row in items:
+                    item_name = row[0]
+                    if item_name: # 确保不添加空的标签
+                        list_item = QListWidgetItem(item_name)
+                        # 用户角色数据存储 (ID, DisplayName)，这里ID和DisplayName相同
+                        list_item.setData(Qt.ItemDataRole.UserRole, (item_name, item_name))
+                        self.item_list.addItem(list_item)
+            else:
+                self.item_list.addItem("未找到符合条件的项目")
+        except Exception as e:
+            self.item_list.clear()
+            self.item_list.addItem("查询项目出错!")
+            QMessageBox.critical(self, "筛选项目失败", f"查询项目时出错: {str(e)}\n{traceback.format_exc()}")
+        finally:
+            self.filter_items_btn.setEnabled(True)
+            self._close_panel_db()
+            self.config_changed_signal.emit()
+
+    def update_panel_action_buttons_state(self, general_config_ok: bool):
+        # 按钮的可用状态取决于“常规配置是否OK”和“本面板的条件是否有效”
+        has_valid_conditions = self.condition_widget.has_valid_input()
+        self.filter_items_btn.setEnabled(general_config_ok and has_valid_conditions)
+
+# --- END OF NEW FILE ---

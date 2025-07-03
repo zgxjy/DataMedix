@@ -297,10 +297,9 @@ class SpecialDataMasterTab(QWidget):
         time_window_text = panel_config.get("time_window_text", "")
         if time_window_text:
             time_map = {
-                "ICU入住后24小时": "icu24h", "ICU入住后48小时": "icu48h",
+                "ICU入住24小时内": "icu24h", "ICU入住48小时内": "icu48h",
                 "整个ICU期间": "icuall", "整个住院期间": "hospall",
-                "整个住院期间 (当前入院)": "hosp", "整个ICU期间 (当前入院)": "icu",
-                "住院以前 (既往史)": "prior"
+                "住院以前 (既往史)": "prior",  
             }
             time_code = time_map.get(time_window_text, sanitize_name_part(time_window_text.split(" ")[0]))
         if time_code: parts.append(time_code)
@@ -328,7 +327,7 @@ class SpecialDataMasterTab(QWidget):
         panel_config = active_panel.get_panel_config()
         return bool(panel_config)
 
-    def _build_merge_query(self, preview_limit=100, for_execution=False):
+    def _build_merge_query(self, preview_limit=100, for_execution=False, active_db_params=None):
         if not self.selected_cohort_table:
             return None, "未选择目标队列数据表.", [], []
         base_new_col_name = self.new_column_name_input.text().strip()
@@ -349,7 +348,8 @@ class SpecialDataMasterTab(QWidget):
                 target_cohort_table_name=f"{self.db_profile.get_cohort_table_schema()}.{self.selected_cohort_table}",
                 base_new_column_name=base_new_col_name,
                 panel_specific_config=panel_config_dict,
-                db_profile=self.db_profile, 
+                db_profile=self.db_profile,
+                active_db_params=active_db_params,
                 for_execution=for_execution,
                 preview_limit=preview_limit
             )
@@ -451,8 +451,8 @@ class SpecialDataMasterTab(QWidget):
         if not self._are_configs_valid_for_action():
             QMessageBox.warning(self, "配置不完整", "请确保所有必要的选项已选择或填写，并且基础列名有效。")
             return
-            
-        build_result = self._build_merge_query(for_execution=True)
+        db_params = self.get_db_params()
+        build_result = self._build_merge_query(for_execution=True, active_db_params=db_params)
         if build_result is None or len(build_result) < 4:
             QMessageBox.critical(self, "内部错误", "构建合并查询时未能返回预期结果结构。")
             return
@@ -510,7 +510,7 @@ class SpecialDataMasterTab(QWidget):
         conn = None
         try:
             conn = psycopg2.connect(**db_params)
-            preview_sql_obj, error_msg, params_for_cte, _ = self._build_merge_query(preview_limit=100, for_execution=False)
+            preview_sql_obj, error_msg, params_for_cte, _ = self._build_merge_query(preview_limit=100, for_execution=False, active_db_params=db_params)
 
             if error_msg:
                 QMessageBox.warning(self, "无法预览", error_msg)

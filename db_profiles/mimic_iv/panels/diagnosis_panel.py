@@ -36,7 +36,7 @@ class DiagnosisConfigPanel(BaseSourceConfigPanel):
     def populate_panel_if_needed(self):
         available_fields = [("long_title", "诊断描述 (Long Title)"), ("icd_code", "诊断代码 (ICD Code 精确)"), ("icd_version", "ICD 版本 (精确)")]
         self.condition_widget.set_available_search_fields(available_fields)
-        self.time_window_widget.set_options(["住院以前 (既往史)", "整个住院期间 (当前入院)"])
+        self.time_window_widget.set_options(["住院以前 (既往史)", "整个住院期间"])
         
     def get_friendly_source_name(self): return "诊断 (Diagnoses - d_icd_diagnoses)"
     def get_panel_config(self) -> dict:

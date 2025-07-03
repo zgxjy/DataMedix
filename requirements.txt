@@ -2,7 +2,6 @@ PySide6
 psycopg2-binary
 pandas
 openpyxl
-re
 sqlalchemy 
 numpy
 chardet

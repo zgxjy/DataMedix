@@ -5,12 +5,7 @@ from db_profiles.base_profile import BaseDbProfile
 
 # 导入所有新的Panel和基础信息模块
 from .panels.lab_panel import EicuLabPanel
-from .panels.vitalperiodic_panel import EicuVitalPeriodicPanel
 from .panels.nursecharting_panel import EicuNurseChartingPanel
-from .panels.infusiondrug_panel import EicuInfusionDrugPanel
-from .panels.diagnosis_panel import EicuDiagnosisPanel
-from .panels.treatment_panel import EicuTreatmentPanel
-from .panels.diagnosis_panel import EicuDiagnosisPanel
 from . import base_info_modules as eicu_base_info
 
 class EICUProfile(BaseDbProfile):
@@ -28,12 +23,7 @@ class EICUProfile(BaseDbProfile):
     def get_source_panels(self) -> List[Tuple[str, Any]]:
         return [
             ("化验 (lab)", EicuLabPanel),
-            ("生命体征-高频 (vitalperiodic)", EicuVitalPeriodicPanel),
             ("护理记录 (nursecharting)", EicuNurseChartingPanel),
-            ("输液药物 (infusiondrug)", EicuInfusionDrugPanel),
-            ("诊断 (diagnosis)", EicuDiagnosisPanel),
-            ("治疗 (treatment)", EicuTreatmentPanel),
-            ("既往史 (pasthistory)", EicuDiagnosisPanel),
         ]
 
     def get_base_info_modules(self) -> List[Tuple[str, str, Callable]]:

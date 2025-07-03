@@ -30,13 +30,13 @@ class ProcedureConfigPanel(BaseSourceConfigPanel):
         panel_layout.addWidget(filter_group)
         logic_group = QGroupBox("提取逻辑"); logic_group_layout = QVBoxLayout(logic_group)
         self.event_output_widget = EventOutputWidget(); self.event_output_widget.output_type_changed.connect(self.config_changed_signal.emit); logic_group_layout.addWidget(self.event_output_widget)
-        self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口:"); self.time_window_widget.time_window_changed.connect(self.config_changed_signal.emit); logic_group_layout.addWidget(self.time_window_widget)
+        self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口:"); self.time_window_widget.time_window_changed.connect(lambda: self.config_changed_signal.emit()); logic_group_layout.addWidget(self.time_window_widget)
         panel_layout.addWidget(logic_group); self.setLayout(panel_layout)
 
     def populate_panel_if_needed(self):
         available_fields = [("long_title", "操作描述 (Long Title)"), ("icd_code", "操作代码 (ICD Code 精确)"), ("icd_version", "ICD 版本 (精确)")]
         self.condition_widget.set_available_search_fields(available_fields)
-        self.time_window_widget.set_options(["整个住院期间 (当前入院)", "整个ICU期间 (当前入院)", "住院以前 (既往史)"])
+        self.time_window_widget.set_options(["整个住院期间", "整个ICU期间", "住院以前 (既往史)"])
         
     def get_friendly_source_name(self): return "操作/手术 (Procedures - d_icd_procedures)"
     def get_panel_config(self) -> dict:

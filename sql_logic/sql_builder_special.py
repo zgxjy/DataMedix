@@ -37,10 +37,21 @@ def build_special_data_sql(
     base_new_column_name: str,
     panel_specific_config: Dict[str, Any],
     db_profile: BaseDbProfile,
+    active_db_params: Optional[Dict] = None,
     for_execution: bool = False,
     preview_limit: int = 100
 ) -> Tuple[Optional[Any], Optional[str], Optional[List[Any]], List[Tuple[str, str]]]:
     
+    if panel_specific_config.get("panel_type") == "merge_preprocessed":
+        return build_merge_preprocessed_sql(
+            target_cohort_table_name=target_cohort_table_name,
+            panel_specific_config=panel_specific_config,
+            db_profile=db_profile,
+            active_db_params=active_db_params,
+            for_execution=for_execution,
+            preview_limit=preview_limit
+        )
+
     generated_column_details_for_preview = [] 
 
     # --- 1. 从配置中提取参数 ---
@@ -215,14 +226,37 @@ def build_special_data_sql(
     
     for _, final_col_ident, agg_template_or_tuple, _ in selected_methods_details:
         sql_expr = None
+
+        # --- 核心修复：定义 event_value 列的表达式 ---
+        event_value_expression = psql.Identifier('event_value') # 默认为 event_value 列
+        # 特殊处理 eICU 的 nursecharting 表，它的数值列是文本类型
+        is_eicu_nursecharting_numeric = (
+            _is_eicu_profile(db_profile) and
+            source_event_table == "public.nursecharting" and
+            not is_text_extraction
+        )
+        if is_eicu_nursecharting_numeric:
+            # 当需要进行数学运算时，必须将文本类型的 nursingchartvalue 转换为数值
+            event_value_expression = psql.SQL("CAST(NULLIF(event_value, '') AS NUMERIC)")
+        # --- 修复结束 ---
+
         if isinstance(agg_template_or_tuple, tuple):
+            # 处理正则表达式等特殊情况
             sql_template, params = agg_template_or_tuple
-            sql_expr = psql.SQL("(ARRAY_AGG({}))[1]").format(sql_template)
+            # 注意：正则表达式通常作用于原始文本，所以这里用原始的 event_value
+            sql_expr = psql.SQL("(ARRAY_AGG({}))[1]").format(
+                psql.SQL(sql_template).format(val_col=psql.Identifier('event_value'))
+            )
             extra_params_for_agg.extend(params)
         elif agg_template_or_tuple in ["COUNT(*)", "TRUE"]:
+            # 处理 COUNT(*) 和布尔值
             sql_expr = psql.SQL(agg_template_or_tuple)
         else:
-            sql_expr = psql.SQL(agg_template_or_tuple).format(val_col=psql.Identifier('event_value'), time_col=psql.Identifier('event_time'))
+            # 处理所有其他标准聚合函数
+            sql_expr = psql.SQL(agg_template_or_tuple).format(
+                val_col=event_value_expression, # <--- 使用我们新定义的表达式
+                time_col=psql.Identifier('event_time')
+            )
         
         if sql_expr:
             aggregated_cols_sql_list.append(psql.SQL("{} AS {}").format(sql_expr, final_col_ident))
@@ -295,3 +329,102 @@ def build_special_data_sql(
         )
         # --- 优化逻辑结束 ---
         return preview_sql, None, final_query_params, generated_column_details_for_preview
+
+
+def build_merge_preprocessed_sql(
+    target_cohort_table_name: str,
+    panel_specific_config: Dict[str, Any],
+    db_profile: BaseDbProfile,
+    active_db_params: Optional[Dict] = None,
+    for_execution: bool = False,
+    preview_limit: int = 100
+) -> Tuple[Optional[Any], Optional[str], Optional[List[Any]], List[Tuple[str, str]]]:
+    
+    source_table_full_name = panel_specific_config.get("source_event_table")
+    selected_columns = panel_specific_config.get("selected_columns", [])
+    join_key = panel_specific_config.get("join_key")
+
+    if not all([source_table_full_name, selected_columns, join_key]):
+        return None, "合并预处理表的配置不完整。", [], []
+
+    try:
+        source_schema, source_table_only = source_table_full_name.split('.')
+        target_schema, target_table_only = target_cohort_table_name.split('.')
+    except ValueError:
+        return None, "表名格式错误 (应为 schema.table)。", [], []
+
+    source_table_ident = psql.Identifier(source_schema, source_table_only)
+    target_table_ident = psql.Identifier(target_schema, target_table_only)
+    join_key_ident = psql.Identifier(join_key)
+    
+    # --- 重要: 解决一个hadm_id可能对应多行预处理结果的问题 ---
+    # 我们使用 DISTINCT ON 来保证每个hadm_id只取一行记录（可以基于某个时间或ID排序）
+    # 这里我们假设预处理表有一个'charttime'或'row_id'可以排序，如果没有，就随机取一个
+    # 这一步保证了合并的确定性
+    source_cte = psql.SQL("""
+    SourceCTE AS (
+        SELECT DISTINCT ON ({key}) *
+        FROM {source_table}
+        ORDER BY {key}, charttime ASC NULLS LAST, hadm_id -- 优先按时间排序
+    )
+    """).format(key=join_key_ident, source_table=source_table_ident)
+
+    if for_execution:
+        # 1. 获取列类型并构建 ALTER TABLE 语句
+        alter_clauses = []
+        col_details_for_preview = []
+        if not active_db_params:
+            return None, "数据库连接参数丢失，无法获取列信息。", [], []
+        conn = psycopg2.connect(**active_db_params)
+        try:
+            with conn.cursor() as cur:
+                for col_name in selected_columns:
+                    cur.execute("""
+                        SELECT data_type FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                    """, (source_schema, source_table_only, col_name))
+                    result = cur.fetchone()
+                    if result:
+                        col_type = result[0]
+                        alter_clauses.append(psql.SQL("ADD COLUMN IF NOT EXISTS {} {}").format(psql.Identifier(col_name), psql.SQL(col_type)))
+                        col_details_for_preview.append((col_name, col_type))
+        finally:
+            conn.close()
+
+        if not alter_clauses:
+            return None, "未能确定要添加的列。", [], []
+
+        alter_sql = psql.SQL("ALTER TABLE {target_table} ").format(target_table=target_table_ident) + psql.SQL(', ').join(alter_clauses) + psql.SQL(";")
+
+        # 2. 构建 UPDATE 语句
+        set_clauses = [psql.SQL("{col} = s.{col}").format(col=psql.Identifier(col_name)) for col_name in selected_columns]
+        update_sql = psql.SQL(
+            "WITH {cte} UPDATE {target} t SET {sets} FROM SourceCTE s WHERE t.{key} = s.{key};"
+        ).format(
+            cte=source_cte,
+            target=target_table_ident,
+            sets=psql.SQL(', ').join(set_clauses),
+            key=join_key_ident
+        )
+        
+        # 返回执行步骤列表
+        return [(alter_sql, None), (update_sql, None)], "execution_list", f"来自 {source_table_only} 表的数据", col_details_for_preview
+
+    else: # for_execution=False, 生成预览SQL
+        sampled_cohort_cte = psql.SQL(
+            "SampledCohort AS (SELECT * FROM {target} ORDER BY RANDOM() LIMIT {limit})"
+        ).format(target=target_table_ident, limit=psql.Literal(preview_limit))
+        
+        select_cols = [psql.SQL("c.*")] + [psql.SQL("s.{}").format(psql.Identifier(c)) for c in selected_columns]
+
+        preview_sql = psql.SQL(
+            "WITH {sampled}, {source} "
+            "SELECT {cols} FROM SampledCohort c "
+            "LEFT JOIN SourceCTE s ON c.{key} = s.{key};"
+        ).format(
+            sampled=sampled_cohort_cte,
+            source=source_cte,
+            cols=psql.SQL(', ').join(select_cols),
+            key=join_key_ident
+        )
+        return preview_sql, None, None, []

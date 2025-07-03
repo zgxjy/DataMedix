@@ -78,7 +78,7 @@ class MedicationConfigPanel(BaseSourceConfigPanel):
         logic_group_layout.addWidget(self.event_output_widget)
 
         self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口:")
-        self.time_window_widget.time_window_changed.connect(self.config_changed_signal.emit)
+        self.time_window_widget.time_window_changed.connect(lambda: self.config_changed_signal.emit())
         logic_group_layout.addWidget(self.time_window_widget)
         
         panel_layout.addWidget(logic_group)
@@ -89,7 +89,7 @@ class MedicationConfigPanel(BaseSourceConfigPanel):
         self.condition_widget.set_available_search_fields(available_fields)
 
         general_event_time_options = [
-            "整个住院期间 (当前入院)", "整个ICU期间 (当前入院)", "住院以前 (既往史)"
+            "整个住院期间", "整个ICU期间", "住院以前 (既往史)"
         ]
         self.time_window_widget.set_options(general_event_time_options) 
         
