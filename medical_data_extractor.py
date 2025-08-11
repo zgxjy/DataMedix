@@ -22,7 +22,7 @@ from tabs.tab_data_dictionary import DataDictionaryTab
 from tabs.tab_data_export import DataExportTab
 from tabs.tab_data_merge import DataMergeTab
 from tabs.tab_sql_lab import SqlLabTab
-
+from tabs.tab_data_processing import DataProcessingTab
 from app_config import APP_NAME, APP_VERSION
 
 class MedicalDataExtractor(QMainWindow):
@@ -50,6 +50,7 @@ class MedicalDataExtractor(QMainWindow):
         self.data_extraction_tab = BaseInfoDataExtractionTab(self.get_db_params, self.get_active_db_profile)
         self.special_data_master_tab = SpecialDataMasterTab(self.get_db_params, self.get_active_db_profile)
         self.data_export_tab = DataExportTab(self.get_db_params)
+        self.data_processing_tab = DataProcessingTab(self.get_db_params, self.get_active_db_profile)
         
         # 实例化辅助工具页面
         self.data_merge_tab = DataMergeTab()
@@ -61,7 +62,7 @@ class MedicalDataExtractor(QMainWindow):
         self.all_pages = [
             self.connection_tab, self.query_cohort_tab, self.data_extraction_tab,
             self.special_data_master_tab, self.data_export_tab, self.data_merge_tab,
-            self.structure_tab, self.data_dictionary_tab, self.sql_lab_tab
+            self.structure_tab, self.data_dictionary_tab, self.sql_lab_tab, self.data_processing_tab
         ]
 
         # --- 设置主布局和中心控件 ---
@@ -93,6 +94,7 @@ class MedicalDataExtractor(QMainWindow):
         self.main_tabs.addTab(self.data_extraction_tab, "3. 添加基础数据")
         self.main_tabs.addTab(self.special_data_master_tab, "4. 添加专项数据")
         self.main_tabs.addTab(self.data_export_tab, "5. 数据预览与导出")
+        self.main_tabs.addTab(self.data_processing_tab, "6. 数据处理")
         
         # --- 数据库 Profile 选择器 (放在一个工具栏里) ---
         profile_toolbar = QToolBar("数据库选择")
