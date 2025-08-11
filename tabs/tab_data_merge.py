@@ -6,7 +6,7 @@ import chardet
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog,
     QTableView, QListWidget, QComboBox, QLineEdit, QSplitter, QGroupBox, QAbstractItemView,
-    QHeaderView, QMessageBox
+    QHeaderView, QMessageBox, QScrollArea
 )
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QStandardItemModel, QStandardItem
@@ -27,6 +27,7 @@ class DataMergeTab(QWidget):
         super().__init__()
         self.df_left = None
         self.df_right = None
+        self.merged_df_result = None
 
         self.main_layout = QVBoxLayout(self)
         self.setup_ui()
@@ -37,6 +38,20 @@ class DataMergeTab(QWidget):
         return result['encoding']
 
     def setup_ui(self):
+        # 1. 创建一个 QScrollArea 并将其设置为主布局的唯一控件
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)  # 关键！让内部控件能自适应宽度
+        self.main_layout.addWidget(scroll_area)
+
+        # 2. 创建一个容器 QWidget，所有的UI元素都将放在这个容器里
+        scroll_content_widget = QWidget()
+        scroll_area.setWidget(scroll_content_widget)
+
+        # 3. 为容器创建一个布局，之后所有的UI元素都添加到这个布局中
+        content_layout = QVBoxLayout(scroll_content_widget)
+
+        # --- 以下是您原有的UI创建代码，只是将 addWidget 的目标从 self.main_layout 改为 content_layout ---
+        
         # Top layout for dataset loading and preview
         top_splitter = QSplitter(Qt.Horizontal)
 
@@ -82,7 +97,8 @@ class DataMergeTab(QWidget):
         right_group.setLayout(right_layout)
         top_splitter.addWidget(right_group)
 
-        self.main_layout.addWidget(top_splitter, 2) # Give more space to top
+        # 将 top_splitter 添加到新的 content_layout
+        content_layout.addWidget(top_splitter, 2)
 
         # Middle layout for merge configuration
         merge_config_group = QGroupBox("合并配置")
@@ -120,7 +136,8 @@ class DataMergeTab(QWidget):
         merge_config_layout.addWidget(self.btn_perform_merge, alignment=Qt.AlignBottom)
 
         merge_config_group.setLayout(merge_config_layout)
-        self.main_layout.addWidget(merge_config_group, 0) # Less space for config
+        # 将 merge_config_group 添加到新的 content_layout
+        content_layout.addWidget(merge_config_group, 0)
 
         # Bottom layout for merged result preview
         merged_result_group = QGroupBox("合并结果")
@@ -134,7 +151,8 @@ class DataMergeTab(QWidget):
         merged_result_layout.addWidget(self.table_merged_preview)
         merged_result_layout.addWidget(self.btn_export_merged)
         merged_result_group.setLayout(merged_result_layout)
-        self.main_layout.addWidget(merged_result_group, 2) # More space for result
+        # 将 merged_result_group 添加到新的 content_layout
+        content_layout.addWidget(merged_result_group, 2)
 
     @Slot(str)
     def load_data(self, side):
@@ -158,13 +176,13 @@ class DataMergeTab(QWidget):
                 self.lbl_left_file.setText(file_path)
                 self.update_table_preview(self.table_left_preview, df)
                 self.update_column_list(self.list_left_cols, df.columns)
-                self.update_column_list(self.list_left_merge_keys, df.columns) # Update merge key list
+                self.update_column_list(self.list_left_merge_keys, df.columns)
             else: # side == 'right'
                 self.df_right = df
                 self.lbl_right_file.setText(file_path)
                 self.update_table_preview(self.table_right_preview, df)
                 self.update_column_list(self.list_right_cols, df.columns)
-                self.update_column_list(self.list_right_merge_keys, df.columns) # Update merge key list
+                self.update_column_list(self.list_right_merge_keys, df.columns)
             
             # Select all columns by default
             if side == 'left':
@@ -181,17 +199,16 @@ class DataMergeTab(QWidget):
                 self.lbl_left_file.setText("加载失败")
                 self.update_table_preview(self.table_left_preview, pd.DataFrame())
                 self.update_column_list(self.list_left_cols, [])
-                self.update_column_list(self.list_left_merge_keys, []) # Clear merge key list
+                self.update_column_list(self.list_left_merge_keys, [])
             else:
                 self.df_right = None
                 self.lbl_right_file.setText("加载失败")
                 self.update_table_preview(self.table_right_preview, pd.DataFrame())
                 self.update_column_list(self.list_right_cols, [])
-                self.update_column_list(self.list_right_merge_keys, []) # Clear merge key list
+                self.update_column_list(self.list_right_merge_keys, [])
 
     def update_table_preview(self, table_view, df):
         if df is not None and not df.empty:
-            # Display only top 100 rows for preview to avoid performance issues
             preview_df = df.head(100) 
             model = PandasTableModel(preview_df)
             table_view.setModel(model)
@@ -201,10 +218,6 @@ class DataMergeTab(QWidget):
     def update_column_list(self, list_widget, columns):
         list_widget.clear()
         list_widget.addItems(columns)
-
-    # def update_key_combo(self, combo_box, columns): # Replaced by update_column_list for QListWidget
-    #     combo_box.clear()
-    #     combo_box.addItems([''] + list(columns)) # Add an empty option
 
     @Slot()
     def perform_merge(self):
@@ -236,7 +249,6 @@ class DataMergeTab(QWidget):
         selected_left_cols = [item.text() for item in selected_left_cols_items]
         selected_right_cols = [item.text() for item in selected_right_cols_items]
 
-        # Ensure merge keys are in selected columns
         for key in left_keys:
             if key not in selected_left_cols:
                 selected_left_cols.append(key)
@@ -244,7 +256,6 @@ class DataMergeTab(QWidget):
             if key not in selected_right_cols:
                 selected_right_cols.append(key)
         
-        # Deduplicate columns (important if merge keys are the same name and selected in both)
         final_left_cols = list(dict.fromkeys(selected_left_cols))
         final_right_cols = list(dict.fromkeys(selected_right_cols))
 
@@ -260,21 +271,12 @@ class DataMergeTab(QWidget):
         how = merge_type_map.get(self.combo_merge_type.currentText(), "left")
 
         try:
-            # Suffixes to handle overlapping column names (excluding keys)
-            # If left_key and right_key are different, pandas handles it.
-            # If they are the same, pandas also handles it by default.
-            # Suffixes are for OTHER columns that might overlap.
-            suffixes = ('_left', '_right')
-            # Suffixes to handle overlapping column names (excluding keys)
             suffixes = ('_left', '_right')
             merged_df = pd.merge(df_left_subset, df_right_subset, 
                                left_on=left_keys, right_on=right_keys, 
                                how=how, suffixes=suffixes)
             
-            # If keys were different and user wants to drop one, they can do it post-merge or we can add an option
-            # For now, keep both if names are different.
-
-            self.merged_df_result = merged_df # Store for export
+            self.merged_df_result = merged_df
             self.update_table_preview(self.table_merged_preview, merged_df)
             self.btn_export_merged.setEnabled(True)
             QMessageBox.information(self, "合并成功", f"数据合并完成，生成 {len(merged_df)} 条记录。")
