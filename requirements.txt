@@ -6,3 +6,7 @@ sqlalchemy
 numpy
 chardet
 pygments
+matplotlib
+seaborn
+lifelines
+scikit-learn
