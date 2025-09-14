@@ -281,3 +281,96 @@ WHERE
     { ' AND '.join([f"{col} IS NULL" for col in comorbidity_map.keys()]) };
 """
     return col_defs, update_sql
+
+# --- 函数5: Charlson Comorbidity Index (CCI) (新增) ---
+def add_charlson_comorbidity_index(table_name, db_profile, **kwargs):
+    """
+    基于 e-ICU 的 pasthistory 和 diagnosis 表中的文本信息，计算 Charlson 合并症指数。
+    """
+    # 定义 Charlson 条件、关键词和分数
+    # 注意：关键词经过了简化以适应 e-ICU 的文本数据格式
+    cci_conditions = {
+        'cci_mi': {'score': 1, 'keywords': ['myocardial infarction', ' mi']},
+        'cci_hf': {'score': 1, 'keywords': ['heart failure', ' hf', 'chf']},
+        'cci_pvd': {'score': 1, 'keywords': ['peripheral vascular', 'pvd']},
+        'cci_cvd': {'score': 1, 'keywords': ['cerebrovascular', 'stroke', 'cva', 'tia']},
+        'cci_dementia': {'score': 1, 'keywords': ['dementia']},
+        'cci_cpd': {'score': 1, 'keywords': ['chronic pulmonary', 'copd', 'emphysema']},
+        'cci_rheumatic': {'score': 1, 'keywords': ['rheumatic', 'lupus', 'sle']},
+        'cci_pud': {'score': 1, 'keywords': ['peptic ulcer']},
+        'cci_mild_liver': {'score': 1, 'keywords': ['chronic hepatitis']},
+        'cci_dm_no_cc': {'score': 1, 'keywords': ['diabe', 'dm']},
+        'cci_dm_cc': {'score': 2, 'keywords': ['diabetic nephropathy', 'diabetic retinopathy', 'diabetic neuropathy']},
+        'cci_paraplegia': {'score': 2, 'keywords': ['paraplegi', 'hemiplegi']},
+        'cci_renal': {'score': 2, 'keywords': ['renal disease', 'renal failure', 'dialysis', 'chronic kidney']},
+        'cci_cancer': {'score': 2, 'keywords': ['cancer', 'tumor', 'leukemia', 'lymphoma']},
+        'cci_severe_liver': {'score': 3, 'keywords': ['cirrhosis', 'portal hypertension']},
+        'cci_metastatic': {'score': 6, 'keywords': ['metastatic', 'metastasis']},
+        'cci_aids': {'score': 6, 'keywords': ['aids', 'hiv']}
+    }
+    
+    # 动态生成列定义
+    col_defs = [col_def(col, "integer") for col in cci_conditions.keys()]
+    col_defs.append(col_def("charlson_score", "integer"))
+
+    # --- SQL Generation ---
+    
+    # 1. 为每个条件生成 CASE WHEN 语句来创建标志位
+    flag_expressions = []
+    for col_name, data in cci_conditions.items():
+        conditions = [f"LOWER(dx.dx_text) LIKE '%{kw}%'" for kw in data['keywords']]
+        flag_expressions.append(f"MAX(CASE WHEN {' OR '.join(conditions)} THEN 1 ELSE 0 END) AS {col_name}")
+
+    # 2. 生成计算最终分数的表达式，处理互斥条件
+    score_calculation_expressions = [
+        # 基础疾病，直接乘以分数
+        "cf.cci_mi * 1", "cf.cci_hf * 1", "cf.cci_pvd * 1", "cf.cci_cvd * 1",
+        "cf.cci_dementia * 1", "cf.cci_cpd * 1", "cf.cci_rheumatic * 1", "cf.cci_pud * 1",
+        "cf.cci_paraplegia * 2", "cf.cci_renal * 2", "cf.cci_aids * 6",
+        # 肝病 (轻度 vs 重度，取分高的)
+        "GREATEST(cf.cci_mild_liver * 1, cf.cci_severe_liver * 3)",
+        # 糖尿病 (无并发症 vs 有并发症，取分高的)
+        "GREATEST(cf.cci_dm_no_cc * 1, cf.cci_dm_cc * 2)",
+        # 肿瘤 (局限性 vs 转移性，取分高的)
+        "GREATEST(cf.cci_cancer * 2, cf.cci_metastatic * 6)"
+    ]
+    final_score_expression = " + ".join(score_calculation_expressions)
+
+    # 3. 构建完整的 UPDATE SQL
+    update_sql = f"-- Step 1: Calculate and update Charlson Comorbidity Index for patients in {table_name}\n"
+    update_sql += f"""
+WITH CciSourceText AS (
+    -- 统一所有诊断和病史文本来源
+    SELECT patientunitstayid, pasthistorypath AS dx_text FROM public.pasthistory WHERE pasthistorypath IS NOT NULL
+    UNION ALL
+    SELECT patientunitstayid, diagnosisstring AS dx_text FROM public.diagnosis WHERE diagnosisstring IS NOT NULL
+),
+CciFlags AS (
+    -- 为每个病人生成所有CCI条件的0/1标志位
+    SELECT 
+        dx.patientunitstayid,
+        {', '.join(flag_expressions)}
+    FROM CciSourceText dx
+    WHERE dx.patientunitstayid IN (SELECT patientunitstayid FROM {table_name})
+    GROUP BY dx.patientunitstayid
+)
+UPDATE {table_name} AS cohort
+SET
+    -- 更新所有单独的标志位
+    {', '.join([f"{col} = cf.{col}" for col in cci_conditions.keys()])},
+    -- 计算并更新最终的CCI总分
+    charlson_score = ({final_score_expression})
+FROM
+    CciFlags AS cf
+WHERE
+    cohort.patientunitstayid = cf.patientunitstayid;
+
+-- Step 2: Set non-matching patients' comorbidities and score to 0
+UPDATE {table_name}
+SET
+    {', '.join([f"{col} = 0" for col in cci_conditions.keys()])},
+    charlson_score = 0
+WHERE
+    charlson_score IS NULL;
+"""
+    return col_defs, update_sql

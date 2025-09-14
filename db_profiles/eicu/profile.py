@@ -42,6 +42,7 @@ class EICUProfile(BaseDbProfile):
             ("实验室指标 (首次/24h平均)", "lab_values", eicu_base_info.add_lab_values_eicu),
             ("生命体征 (首次/24h平均)及BMI", "vital_signs", eicu_base_info.add_vital_signs_eicu),
             ("合并症 (0/1变量)", "comorbidities", eicu_base_info.add_comorbidities_eicu),
+            ("Charlson合并症指数", "charlson_comorbidity_index", eicu_base_info.add_charlson_comorbidity_index),
         ]
 
     def get_cohort_creation_configs(self) -> Dict[str, Dict[str, Any]]:
