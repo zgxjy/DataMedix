@@ -38,7 +38,7 @@ class EICUProfile(BaseDbProfile):
 
     def get_base_info_modules(self) -> List[Tuple[str, str, Callable]]:
         return [
-            ("人口学及APACHE-IVa评分", "demography_apache", eicu_base_info.add_demography_and_apache),
+            ("人口学、体格及APACHE评分", "demography_apache", eicu_base_info.add_demography_and_apache),
             ("实验室指标 (首次/24h平均)", "lab_values", eicu_base_info.add_lab_values_eicu),
             ("生命体征 (首次/24h平均)及BMI", "vital_signs", eicu_base_info.add_vital_signs_eicu),
             ("合并症 (0/1变量)", "comorbidities", eicu_base_info.add_comorbidities_eicu),

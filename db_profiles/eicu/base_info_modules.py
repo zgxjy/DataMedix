@@ -21,11 +21,18 @@ def add_demography_and_apache(table_name, db_profile, **kwargs):
         col_def("unitadmittime24", "character varying"),
         col_def("unitdischargetime24", "character varying"),
         col_def("uniquepid", "character varying"),
+        # patient 表新增指标
+        col_def("admissionheight", "double precision"),         # <--- 新增
+        col_def("admissionweight", "double precision"),         # <--- 新增
+        col_def("dischargeweight", "double precision"),         # <--- 新增
         # APACHE IVa Score
         col_def("apachescore", "integer"),
         col_def("apacheversion", "character varying"),
         col_def("predictedicumortality", "double precision"),
         col_def("predictedhospitalmortality", "double precision"),
+        # apachepatientresult 表新增指标
+        col_def("acutephysiologyscore", "integer"),             # <--- 新增
+        col_def("actualhospitallos", "double precision"),       # <--- 新增
     ]
     
     update_sql = f"-- Update Demographics and APACHE IVa scores for {table_name}\n"
@@ -44,7 +51,10 @@ SET
     unittype = p.unittype,
     unitadmittime24 = p.unitadmittime24,
     unitdischargetime24 = p.unitdischargetime24,
-    uniquepid = p.uniquepid
+    uniquepid = p.uniquepid,
+    admissionheight = p.admissionheight, 
+    admissionweight = p.admissionweight, 
+    dischargeweight = p.dischargeweight
 FROM public.patient p
 WHERE cohort.patientunitstayid = p.patientunitstayid;
 
@@ -56,6 +66,8 @@ WITH apache_scores AS (
         apr.apacheversion,
         CAST(apr.predictedicumortality AS double precision) as predictedicumortality,
         CAST(apr.predictedhospitalmortality AS double precision) as predictedhospitalmortality,
+        apr.acutephysiologyscore,
+        apr.actualhospitallos,
         ROW_NUMBER() OVER(PARTITION BY apr.patientunitstayid ORDER BY apr.apachepatientresultsid) as rn
     FROM public.apachepatientresult apr
     WHERE apr.apacheversion = 'IVa' AND apr.patientunitstayid IN (SELECT patientunitstayid FROM {table_name})
@@ -65,7 +77,9 @@ SET
     apachescore = a.apachescore,
     apacheversion = a.apacheversion,
     predictedicumortality = a.predictedicumortality,
-    predictedhospitalmortality = a.predictedhospitalmortality
+    predictedhospitalmortality = a.predictedhospitalmortality,
+    acutephysiologyscore = a.acutephysiologyscore,
+    actualhospitallos = a.actualhospitallos 
 FROM apache_scores a
 WHERE cohort.patientunitstayid = a.patientunitstayid AND a.rn = 1;
 """
