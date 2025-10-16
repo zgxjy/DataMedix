@@ -118,7 +118,7 @@ def build_special_data_sql(
 
     if detail_table and detail_filters:
         detail_where_clauses = []
-        note_id_col_in_detail = 'note_id' # 假设详情表总是有note_id
+        note_id_col_in_detail = 'note_id'
         for field, op, value in detail_filters:
             operator = psql.SQL(op)
             detail_where_clauses.append(psql.SQL("{field} {op} %s").format(field=psql.Identifier(field), op=operator))
@@ -168,6 +168,11 @@ def build_special_data_sql(
     if time_col_for_window:
         select_event_cols_defs.append(psql.SQL("{}.{} AS event_time").format(event_alias, psql.Identifier(time_col_for_window)))
 
+    if any(m == "MED_TIMESERIES_JSON" for m, s in aggregation_methods.items() if s):
+        select_event_cols_defs.append(psql.SQL("{}.stoptime").format(event_alias))
+        select_event_cols_defs.append(psql.SQL("{}.dose_unit_rx").format(event_alias))
+        select_event_cols_defs.append(psql.SQL("{}.form_unit_disp").format(event_alias))
+
     filtered_events_cte_sql = psql.SQL("FilteredEvents AS (SELECT {select_list} {from_join} WHERE {conditions})").format(
         select_list=psql.SQL(', ').join(select_event_cols_defs),
         from_join=from_join_clause_for_cte,
@@ -212,7 +217,6 @@ def build_special_data_sql(
             sql_template = psql.SQL(sql_template_with_placeholder).format(val_col=psql.Identifier('event_value'))
             template_tuple = (sql_template, [pattern])
             col_type = psql.SQL("TEXT")
-            # --- 注意，这里我们传递的是一个元组，表示它需要特殊处理 ---
             selected_methods_details.append((final_col_name, psql.Identifier(final_col_name), template_tuple, col_type))
             generated_column_details_for_preview.append((final_col_name, "Text (Extracted)"))
 
@@ -227,33 +231,47 @@ def build_special_data_sql(
     for _, final_col_ident, agg_template_or_tuple, _ in selected_methods_details:
         sql_expr = None
 
-        # --- 核心修复：定义 event_value 列的表达式 ---
-        event_value_expression = psql.Identifier('event_value') # 默认为 event_value 列
+        method_key = ""
+        if aggregation_methods:
+            for m_key, is_selected in aggregation_methods.items():
+                if is_selected and f"_{m_key.lower()}" in str(final_col_ident):
+                    method_key = m_key
+                    break
+
+        event_value_expression = psql.Identifier('event_value')
         is_eicu_text_to_numeric_cast_needed = (
             _is_eicu_profile(db_profile) and
-            source_event_table in ["public.nursecharting", "public.infusiondrug"] and # <-- 添加 infusiondrug
-            not is_text_extraction # 仅对数值聚合模式生效
+            source_event_table in ["public.nursecharting", "public.infusiondrug"] and
+            not is_text_extraction
         )
         
-        # 如果需要转换，则重写值的表达式
         if is_eicu_text_to_numeric_cast_needed:
             event_value_expression = psql.SQL("CAST(NULLIF(event_value, '') AS NUMERIC)")
 
-        if isinstance(agg_template_or_tuple, tuple):
-            # 处理正则表达式等特殊情况
+        if method_key == "MED_TIMESERIES_JSON":
+            # --- BUG FIX STARTS HERE ---
+            # The error occurred because we were trying to reference the `evt` alias
+            # inside a query that was selecting from `FilteredEvents`.
+            # The columns are now direct columns of `FilteredEvents`, so we should reference them without an alias.
+            sql_expr = psql.SQL(agg_template_or_tuple).format(
+                val_col=psql.Identifier('event_value'),
+                time_col=psql.Identifier('event_time'),
+                stop_col=psql.Identifier('stoptime'),
+                unit_col=psql.Identifier('dose_unit_rx'),
+                form_col=psql.Identifier('form_unit_disp')
+            )
+            # --- BUG FIX ENDS HERE ---
+        elif isinstance(agg_template_or_tuple, tuple):
             sql_template, params = agg_template_or_tuple
-            # 注意：正则表达式通常作用于原始文本，所以这里用原始的 event_value
             sql_expr = psql.SQL("(ARRAY_AGG({}))[1]").format(
                 psql.SQL(sql_template).format(val_col=psql.Identifier('event_value'))
             )
             extra_params_for_agg.extend(params)
         elif agg_template_or_tuple in ["COUNT(*)", "TRUE"]:
-            # 处理 COUNT(*) 和布尔值
             sql_expr = psql.SQL(agg_template_or_tuple)
         else:
-            # 处理所有其他标准聚合函数
             sql_expr = psql.SQL(agg_template_or_tuple).format(
-                val_col=event_value_expression, # <--- 使用我们新定义的表达式
+                val_col=event_value_expression,
                 time_col=psql.Identifier('event_time')
             )
         
@@ -289,10 +307,9 @@ def build_special_data_sql(
             limit=psql.Literal(preview_limit)
         )
 
-        # 修改原始的 filtered_events_cte_sql，让它 join 抽样后的表
         from_join_clause_for_cte = psql.SQL("FROM {event_table} {evt_alias} JOIN {cohort_table} {coh_alias} ON {evt_alias}.{evt_key} = {coh_alias}.{coh_key}").format(
             event_table=psql.SQL(source_event_table), evt_alias=event_alias,
-            cohort_table=sampled_cohort_cte_name, # <-- 使用抽样后的表
+            cohort_table=sampled_cohort_cte_name,
             coh_alias=cohort_alias,
             evt_key=psql.Identifier(event_join_key), coh_key=psql.Identifier(cohort_join_key)
         )
@@ -308,7 +325,6 @@ def build_special_data_sql(
             main_agg_select=main_agg_select_sql
         )
         
-        # 最终的预览SQL
         preview_select_cols = [psql.SQL("{}.*").format(cohort_alias)]
         for _, final_col_ident, _, _ in selected_methods_details:
             preview_select_cols.append(psql.SQL("{md_alias}.{col_ident}").format(md_alias=md_alias, col_ident=final_col_ident))
@@ -321,12 +337,11 @@ def build_special_data_sql(
             sampled_cohort=sampled_cohort_cte,
             data_gen_query=data_gen_query_part,
             select_cols=psql.SQL(', ').join(preview_select_cols),
-            sampled_cohort_name=sampled_cohort_cte_name, # <-- 从抽样后的表 select
+            sampled_cohort_name=sampled_cohort_cte_name,
             coh_alias=cohort_alias,
             md_alias=md_alias, 
             join_key=group_by_key_ident
         )
-        # --- 优化逻辑结束 ---
         return preview_sql, None, final_query_params, generated_column_details_for_preview
 
 
@@ -356,20 +371,15 @@ def build_merge_preprocessed_sql(
     target_table_ident = psql.Identifier(target_schema, target_table_only)
     join_key_ident = psql.Identifier(join_key)
     
-    # --- 重要: 解决一个hadm_id可能对应多行预处理结果的问题 ---
-    # 我们使用 DISTINCT ON 来保证每个hadm_id只取一行记录（可以基于某个时间或ID排序）
-    # 这里我们假设预处理表有一个'charttime'或'row_id'可以排序，如果没有，就随机取一个
-    # 这一步保证了合并的确定性
     source_cte = psql.SQL("""
     SourceCTE AS (
         SELECT DISTINCT ON ({key}) *
         FROM {source_table}
-        ORDER BY {key}, charttime ASC NULLS LAST, hadm_id -- 优先按时间排序
+        ORDER BY {key}, charttime ASC NULLS LAST, hadm_id
     )
     """).format(key=join_key_ident, source_table=source_table_ident)
 
     if for_execution:
-        # 1. 获取列类型并构建 ALTER TABLE 语句
         alter_clauses = []
         col_details_for_preview = []
         if not active_db_params:
@@ -395,21 +405,18 @@ def build_merge_preprocessed_sql(
 
         alter_sql = psql.SQL("ALTER TABLE {target_table} ").format(target_table=target_table_ident) + psql.SQL(', ').join(alter_clauses) + psql.SQL(";")
 
-        # 2. 构建 UPDATE 语句
-        set_clauses = [psql.SQL("{col} = s.{col}").format(col=psql.Identifier(col_name)) for col_name in selected_columns]
         update_sql = psql.SQL(
             "WITH {cte} UPDATE {target} t SET {sets} FROM SourceCTE s WHERE t.{key} = s.{key};"
         ).format(
             cte=source_cte,
             target=target_table_ident,
-            sets=psql.SQL(', ').join(set_clauses),
+            sets=psql.SQL(', ').join([psql.SQL("{col} = s.{col}").format(col=psql.Identifier(col_name)) for col_name in selected_columns]),
             key=join_key_ident
         )
         
-        # 返回执行步骤列表
         return [(alter_sql, None), (update_sql, None)], "execution_list", f"来自 {source_table_only} 表的数据", col_details_for_preview
 
-    else: # for_execution=False, 生成预览SQL
+    else:
         sampled_cohort_cte = psql.SQL(
             "SampledCohort AS (SELECT * FROM {target} ORDER BY RANDOM() LIMIT {limit})"
         ).format(target=target_table_ident, limit=psql.Literal(preview_limit))

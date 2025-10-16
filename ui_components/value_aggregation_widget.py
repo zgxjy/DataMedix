@@ -1,30 +1,27 @@
-# --- START OF MODIFIED ui_components/value_aggregation_widget.py ---
-from PySide6.QtWidgets import QWidget, QGridLayout, QCheckBox, QPushButton, QVBoxLayout, QHBoxLayout # 确保 QHBoxLayout 导入
-from PySide6.QtCore import Signal, Qt, Slot # 确保 Slot 导入
-from app_config import AGGREGATION_METHODS_DISPLAY # 导入配置
+# --- START OF FILE ui_components/value_aggregation_widget.py ---
+from PySide6.QtWidgets import QWidget, QGridLayout, QCheckBox, QPushButton, QVBoxLayout, QHBoxLayout
+from PySide6.QtCore import Signal, Qt, Slot
+from app_config import AGGREGATION_METHODS_DISPLAY
 
 class ValueAggregationWidget(QWidget):
     aggregation_changed = Signal()
 
-    NUMERIC_ONLY_METHODS = [ # "MIN", "MAX" 从这里移除，因为它们对文本也有意义（字典序）
+    NUMERIC_ONLY_METHODS = [
         "MEAN", "MEDIAN", "SUM", "STDDEV_SAMP", "VAR_SAMP",
         "CV", "P25", "P75", "IQR", "RANGE"
     ]
-    # FIRST_VALUE, LAST_VALUE, COUNT, TIMESERIES_JSON, MIN, MAX 可以用于文本和数值
-
-    COUNT_METHOD_KEY = "COUNT" # 这个保持不变
+    COUNT_METHOD_KEY = "COUNT"
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.agg_checkboxes = {}
         self._block_aggregation_signal = False
+        self.grid_layout = QGridLayout()
+        self.next_row = 0
+        self.next_col = 0
         self.init_ui()
 
-    # init_ui, _emit_aggregation_changed_if_not_blocked, _select_all_methods, _deselect_all_methods,
-    # get_selected_methods, set_selected_methods, clear_selections 保持你之前修改后的版本即可。
-    # 关键是 set_text_mode 的调整：
-
-    def init_ui(self): # 确保这部分与你之前修改的一致
+    def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(5)
@@ -39,22 +36,44 @@ class ValueAggregationWidget(QWidget):
         select_buttons_layout.addWidget(self.deselect_all_btn)
         select_buttons_layout.addStretch()
         main_layout.addLayout(select_buttons_layout)
-
-        checkbox_layout = QGridLayout()
-        row, col = 0, 0
-        for display_name, internal_key in AGGREGATION_METHODS_DISPLAY: # 使用 app_config 中的定义
+        
+        # 使用实例变量 self.grid_layout
+        for display_name, internal_key in AGGREGATION_METHODS_DISPLAY:
             cb = QCheckBox(display_name)
             cb.stateChanged.connect(self._emit_aggregation_changed_if_not_blocked)
-            checkbox_layout.addWidget(cb, row, col, Qt.AlignmentFlag.AlignLeft)
+            self.grid_layout.addWidget(cb, self.next_row, self.next_col, Qt.AlignmentFlag.AlignLeft)
             self.agg_checkboxes[internal_key] = cb
             
-            col += 1
-            if col >= 4:
-                col = 0
-                row += 1
+            self.next_col += 1
+            if self.next_col >= 4:
+                self.next_col = 0
+                self.next_row += 1
         
-        main_layout.addLayout(checkbox_layout)
+        main_layout.addLayout(self.grid_layout)
         self.setLayout(main_layout)
+
+    def add_custom_aggregation(self, display_name: str, internal_key: str, is_checked_by_default: bool = True):
+        """ <<< NEW METHOD: 动态添一个自定义的聚合选项 """
+        if internal_key in self.agg_checkboxes:
+            # 如果已存在，则只更新状态和可见性
+            self.agg_checkboxes[internal_key].setText(display_name)
+            self.agg_checkboxes[internal_key].setVisible(True)
+            return
+
+        cb = QCheckBox(display_name)
+        cb.stateChanged.connect(self._emit_aggregation_changed_if_not_blocked)
+        cb.setChecked(is_checked_by_default)
+        
+        # 添加到布局的下一个可用位置
+        self.grid_layout.addWidget(cb, self.next_row, self.next_col, Qt.AlignmentFlag.AlignLeft)
+        self.agg_checkboxes[internal_key] = cb
+        
+        self.next_col += 1
+        if self.next_col >= 4:
+            self.next_col = 0
+            self.next_row += 1
+        
+        self.aggregation_changed.emit() # 通知外部已更改
 
     @Slot()
     def _emit_aggregation_changed_if_not_blocked(self):
@@ -66,7 +85,7 @@ class ValueAggregationWidget(QWidget):
         any_checkbox_state_actually_changed = False
         try:
             for cb in self.agg_checkboxes.values():
-                if cb.isEnabled() and not cb.isChecked():
+                if cb.isEnabled() and not cb.isChecked() and cb.isVisible(): # 只操作可见的
                     cb.setChecked(True)
                     any_checkbox_state_actually_changed = True
         finally:
@@ -79,7 +98,7 @@ class ValueAggregationWidget(QWidget):
         any_checkbox_state_actually_changed = False
         try:
             for cb in self.agg_checkboxes.values():
-                if cb.isChecked():
+                if cb.isChecked() and cb.isVisible(): # 只操作可见的
                     cb.setChecked(False)
                     any_checkbox_state_actually_changed = True
         finally:
@@ -112,19 +131,16 @@ class ValueAggregationWidget(QWidget):
                 is_strictly_numeric_method = internal_key in self.NUMERIC_ONLY_METHODS
                 original_checked_state = cb.isChecked()
 
-                # 对于 "TIMESERIES_JSON", 它对文本和数值都有效，所以不受 is_text_mode 直接禁用
-                # MIN, MAX, FIRST_VALUE, LAST_VALUE, COUNT 对文本和数值也都有意义
                 if is_text_mode and is_strictly_numeric_method:
                     cb.setEnabled(False)
                     if cb.isChecked():
                         cb.setChecked(False)
                 else:
-                    cb.setEnabled(True) # 确保其他情况下（包括 TIMESERIES_JSON）是启用的
+                    cb.setEnabled(True)
 
                 if cb.isChecked() != original_checked_state:
                     any_checkbox_state_actually_changed_due_to_text_mode = True
                 
-                # 更新 "Count" 的标签 (这部分逻辑保持)
                 if internal_key == self.COUNT_METHOD_KEY:
                     original_display_name_for_count = "计数 (Count)"
                     for disp, key_in_config in AGGREGATION_METHODS_DISPLAY:
@@ -150,5 +166,3 @@ class ValueAggregationWidget(QWidget):
             self._block_aggregation_signal = False
         if any_checkbox_state_actually_changed:
             self.aggregation_changed.emit()
-
-# --- END OF MODIFIED ui_components/value_aggregation_widget.py ---

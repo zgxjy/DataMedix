@@ -1,7 +1,7 @@
 # --- START OF FILE app_config.py ---
 
 # 应用版本信息
-APP_VERSION = "1.1.1-20250914" # 版本更新
+APP_VERSION = "251016" # 版本更新
 APP_NAME = "通用医学数据提取与处理工具"
 
 # 默认数据库连接参数 (用户可以在UI中覆盖)
@@ -30,6 +30,7 @@ LOG_LEVEL = "INFO"
 # --- 专项数据聚合方法定义 (通用部分) ---
 
 # 用户在UI上看到的聚合方法及其内部使用的唯一键
+# 注意：我们故意不把 MED_TIMESERIES_JSON 添加到这里，以避免它在所有面板中显示
 AGGREGATION_METHODS_DISPLAY = [
     ("平均值 (Mean)", "MEAN"),
     ("中位数 (Median)", "MEDIAN"),
@@ -69,6 +70,8 @@ SQL_AGGREGATES = {
     "IQR": "(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {val_col})) - (PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {val_col}))",
     "RANGE": "MAX({val_col}) - MIN({val_col})",
     "TIMESERIES_JSON": "JSONB_AGG(JSONB_BUILD_OBJECT('time', {time_col}, 'value', {val_col}) ORDER BY {time_col} ASC NULLS LAST)",
+    # vvv 仍然在这里定义SQL逻辑，供后台调用 vvv
+    "MED_TIMESERIES_JSON": "JSONB_AGG(JSONB_BUILD_OBJECT('start', {time_col}, 'stop', {stop_col}, 'dose', {val_col}, 'unit', {unit_col}, 'form', {form_col}) ORDER BY {time_col} ASC NULLS LAST)",
 }
 
 # 内部键对应的SQL结果列类型
@@ -89,5 +92,6 @@ AGGREGATE_RESULT_TYPES = {
     "IQR": "DOUBLE PRECISION",
     "RANGE": "NUMERIC",
     "TIMESERIES_JSON": "JSONB",
+    "MED_TIMESERIES_JSON": "JSONB", # <<< 在这里定义类型
 }
 # 注意: 文本类型列的结果类型 (MIN, MAX等) 应由 specific_sql_builder 根据面板配置动态处理。
