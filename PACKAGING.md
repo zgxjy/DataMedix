@@ -66,7 +66,7 @@
     ```
 
     ```bash
-    pyinstaller --name MedicalDataExtractor --onefile --windowed --icon=assets/icons/icon.ico medical_data_extractor.py
+    pyinstaller --name MedicalDataExtractor --onefile --windowed --icon=assets/icons/icon.ico --hidden-import=scipy._cyutility medical_data_extractor.py
     ```
     -   `--icon=your_icon.ico`:  (可选) 指定可执行文件的图标（ICO 文件）。
     -   `--name MedicalDataExtractor`: 指定生成的可执行文件名和相关文件夹名。
