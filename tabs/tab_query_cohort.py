@@ -117,36 +117,82 @@ class CohortCreationWorker(QObject):
         if 'eicu' in self.cohort_schema: return psql.SQL("DROP TABLE IF EXISTS {target_table}; CREATE TABLE {target_table} AS SELECT evt.patientunitstayid, pat.uniquepid, evt.admittime, pat.unitdischargeoffset AS los_icu_minutes, pat.unitadmittime24 AS icu_intime, evt.qualifying_event_title, evt.qualifying_event_time AS diagnosis_offset_min, pat.age, pat.gender, pat.hospitaldischargestatus FROM {temp_event} evt JOIN public.patient pat ON evt.patientunitstayid = pat.patientunitstayid;").format(target_table=target_table_ident, temp_event=temp_event_ad_table)
         return psql.SQL("DROP TABLE IF EXISTS {target_table}; CREATE TABLE {target_table} AS SELECT evt.subject_id, evt.hadm_id, evt.admittime, adm.dischtime, icu.stay_id, icu.intime AS icu_intime, icu.outtime AS icu_outtime, EXTRACT(EPOCH FROM (icu.outtime - icu.intime)) / 3600.0 AS los_icu_hours, evt.qualifying_event_code, evt.qualifying_event_icd_version, evt.qualifying_event_title, evt.qualifying_event_seq_num FROM {temp_event} evt JOIN mimiciv_hosp.admissions adm ON evt.hadm_id = adm.hadm_id LEFT JOIN (SELECT i.*, ROW_NUMBER() OVER(PARTITION BY i.hadm_id ORDER BY i.intime) as rn FROM mimiciv_icu.icustays i) icu ON evt.hadm_id = icu.hadm_id AND icu.rn = 1;").format(target_table=target_table_ident, temp_event=temp_event_ad_table)
     def _build_base_event_query(self):
-        details = self.source_mode_details; event_table = psql.SQL(details['event_table']); select_list = []
+        details = self.source_mode_details
+        event_table = psql.SQL(details['event_table'])
+        select_list = []
+        
+        # --- START OF ROBUST FIX ---
+        # 复制一份原始的 WHERE 子句模板
         where_clause_str = self.condition_sql_template
-        def get_quoted_str(identifier):
+        
+        # 仅当需要连接字典表时，才对 WHERE 子句中的字段进行限定，以避免歧义
+        if details.get('dictionary_table'):
+            self.log.emit("检测到字典表连接，正在限定WHERE子句中的字段...")
+            # 获取所有可能在字典表中进行搜索的字段
+            searchable_dict_fields = [field[0] for field in details.get('search_fields', [])]
+            
             dummy_conn = None
-            try: dummy_conn = psycopg2.connect(""); return identifier.as_string(dummy_conn)
-            except Exception:
-                if isinstance(identifier.strings, (list, tuple)) and len(identifier.strings) > 1: return f'"{identifier.strings[0]}"."{identifier.strings[1]}"'
-                return f'"{identifier.strings[0]}"'
+            try:
+                # 尝试使用默认参数连接，这在很多本地配置中会成功
+                dummy_conn = psycopg2.connect("")
+                
+                for field_name in searchable_dict_fields:
+                    # 将 'icd_code' 转换为 '"icd_code"'
+                    unqualified_str = psql.Identifier(field_name).as_string(dummy_conn)
+                    # 将 ('dd', 'icd_code') 转换为 '"dd"."icd_code"'
+                    qualified_str = psql.Identifier('dd', field_name).as_string(dummy_conn)
+                    
+                    if unqualified_str in where_clause_str:
+                        self.log.emit(f"限定字段 (方法: psycopg2): {unqualified_str} -> {qualified_str}")
+                        where_clause_str = where_clause_str.replace(unqualified_str, qualified_str)
+
+            except psycopg2.Error:
+                # 如果上面的连接失败，回退到手动格式化。这对于简单标识符是安全的。
+                self.log.emit("临时数据库连接失败，回退到手动字段限定。")
+                for field_name in searchable_dict_fields:
+                    # 手动构建带引号的标识符
+                    unqualified_str = f'"{field_name}"'
+                    qualified_str = f'"dd"."{field_name}"'
+                    
+                    if unqualified_str in where_clause_str:
+                        self.log.emit(f"限定字段 (方法: 手动): {unqualified_str} -> {qualified_str}")
+                        where_clause_str = where_clause_str.replace(unqualified_str, qualified_str)
             finally:
-                if dummy_conn: dummy_conn.close()
+                if dummy_conn:
+                    dummy_conn.close()
+        # --- END OF ROBUST FIX ---
+
+        # eICU 的逻辑构建部分
         if 'eicu' in self.cohort_schema:
             select_list.extend([psql.SQL("e.patientunitstayid AS patientunitstayid"), psql.SQL("pat.unitadmittime24 AS admittime"), psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])), psql.SQL("e.{} AS qualifying_event_seq_num").format(psql.Identifier(details.get('event_seq_num_col', 'diagnosispriority'))), psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details.get('event_time_col', 'diagnosisoffset'))), psql.SQL("NULL AS qualifying_event_icd_version")])
             from_clause = psql.SQL("FROM {event_table} e JOIN public.patient pat ON e.patientunitstayid = pat.patientunitstayid").format(event_table=event_table)
+        
+        # MIMIC-IV 的逻辑构建部分
         else:
             select_list.extend([psql.SQL("e.subject_id"), psql.SQL("e.hadm_id"), psql.SQL("adm.admittime"), psql.SQL("e.{} AS qualifying_event_code").format(psql.Identifier(details['event_icd_col']))])
             from_clause = psql.SQL("FROM {event_table} e JOIN mimiciv_hosp.admissions adm ON e.hadm_id = adm.hadm_id").format(event_table=event_table)
+            
             if dict_table := psql.SQL(details['dictionary_table']) if details.get('dictionary_table') else None:
                 join_on_parts = [psql.SQL("e.{event_icd_col} = dd.{dict_icd_col}").format(event_icd_col=psql.Identifier(details['event_icd_col']), dict_icd_col=psql.Identifier(details['dict_icd_col']))]
                 if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table']: 
                     join_on_parts.append(psql.SQL("e.icd_version = dd.icd_version"))
-                    unqualified_id_str = get_quoted_str(psql.Identifier('icd_version')); qualified_id_str = get_quoted_str(psql.Identifier('dd', 'icd_version'))
-                    where_clause_str = where_clause_str.replace(unqualified_id_str, qualified_id_str)
+                
                 from_clause += psql.SQL(" JOIN {dict_table} dd ON {join_on}").format(dict_table=dict_table, join_on=psql.SQL(" AND ").join(join_on_parts))
                 select_list.append(psql.SQL("dd.{} AS qualifying_event_title").format(psql.Identifier(details['dict_title_col'])))
-            else: select_list.append(psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])))
+            else: 
+                select_list.append(psql.SQL("e.{} AS qualifying_event_title").format(psql.Identifier(details['event_icd_col'])))
+            
             select_list.append(psql.SQL("e.{} AS qualifying_event_seq_num").format(psql.Identifier(details['event_seq_num_col'])) if details.get("event_seq_num_col") else psql.SQL("NULL AS qualifying_event_seq_num"))
-            if details.get("event_time_col"): select_list.append(psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details['event_time_col'])))
+            if details.get("event_time_col"): 
+                select_list.append(psql.SQL("e.{} AS qualifying_event_time").format(psql.Identifier(details['event_time_col'])))
             select_list.append(psql.SQL("e.icd_version AS qualifying_event_icd_version") if "diagnoses_icd" in details['event_table'] or "procedures_icd" in details['event_table'] else psql.SQL("NULL AS qualifying_event_icd_version"))
-        return psql.SQL("SELECT {selects} {froms} WHERE {where}").format(selects=psql.SQL(', ').join(select_list), froms=from_clause, where=psql.SQL(where_clause_str)), self.condition_params
-
+        
+        # 使用我们最终处理过的 where_clause_str
+        return psql.SQL("SELECT {selects} {froms} WHERE {where}").format(
+            selects=psql.SQL(', ').join(select_list), 
+            froms=from_clause, 
+            where=psql.SQL(where_clause_str)
+        ), self.condition_params
 class QueryCohortTab(QWidget):
     # ... (__init__ and most of init_ui are the same) ...
     def __init__(self, get_db_params_func, get_db_profile_func, parent=None):
