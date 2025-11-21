@@ -114,19 +114,19 @@ class EicuNurseChartingPanel(BaseSourceConfigPanel):
         if self.time_window_widget.combo_box.count() > 0:
             self.time_window_widget.combo_box.setCurrentIndex(0)
 
+# --- 替换 get_panel_config ---
     def get_panel_config(self) -> dict:
         selected_ids = self.get_selected_item_ids()
         is_text_mode = self.rb_value_text.isChecked()
         value_col = "nursingchartcelltypevalname" if is_text_mode else "nursingchartvalue"
         
-        # 只有选择了项目并且选择了至少一个聚合方法，配置才有效
         aggregation_methods = self.value_agg_widget.get_selected_methods()
         if not selected_ids or not any(aggregation_methods.values()):
             return {}
 
         return {
             "source_event_table": "public.nursecharting",
-            "item_id_column_in_event_table": "nursingchartcelltypevallabel", # 使用标签作为筛选ID
+            "item_id_column_in_event_table": "nursingchartcelltypevallabel",
             "selected_item_ids": selected_ids,
             "value_column_to_extract": value_col,
             "time_column_in_event_table": "nursingchartoffset",
@@ -136,7 +136,46 @@ class EicuNurseChartingPanel(BaseSourceConfigPanel):
             "time_window_text": self.time_window_widget.get_current_time_window_text(),
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
             "cte_join_on_cohort_override": None,
+            
+            # [新增] UI 状态
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()],
+                "is_text_mode": is_text_mode # 保存单选状态
+            }
         }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        ui_state = config.get("_ui_state", {})
+        
+        # 1. 恢复筛选
+        if "condition_widget" in ui_state:
+            available_fields = [("nursingchartcelltypevallabel", "标签 (Label)"), ("nursingchartcelltypecat", "类别 (Category)"), ("nursingchartcelltypevalname", "值名称 (Value Name)")]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        # 2. 恢复列表
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        # 3. 恢复单选按钮状态
+        is_text = ui_state.get("is_text_mode", False)
+        if is_text: self.rb_value_text.setChecked(True)
+        else: self.rb_value_numeric.setChecked(True)
+        self._on_value_source_changed() # 触发联动
+
+        # 4. 恢复聚合和时间
+        self.value_agg_widget.set_selected_methods(config.get("aggregation_methods", {}))
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
 
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems():

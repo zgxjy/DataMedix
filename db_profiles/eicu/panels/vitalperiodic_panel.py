@@ -77,7 +77,8 @@ class EicuVitalPeriodicPanel(BaseSourceConfigPanel):
         
     def get_friendly_source_name(self) -> str:
         return "e-ICU 生命体征 (vitalperiodic)"
-    
+
+# --- 替换 get_panel_config ---
     def get_panel_config(self) -> Dict[str, Any]:
         selected_vital_col = self.vitals_combo.currentData()
         aggregation_methods = self.value_agg_widget.get_selected_methods()
@@ -87,10 +88,8 @@ class EicuVitalPeriodicPanel(BaseSourceConfigPanel):
 
         return {
             "source_event_table": "public.vitalperiodic",
-            # 关键：对于宽表，我们没有 item_id 列，所以设为 None
             "item_id_column_in_event_table": None,
             "selected_item_ids": [],
-            # 关键：要聚合的值直接来自用户选择的列
             "value_column_to_extract": selected_vital_col,
             "time_column_in_event_table": "observationoffset",
             "aggregation_methods": aggregation_methods,
@@ -99,7 +98,27 @@ class EicuVitalPeriodicPanel(BaseSourceConfigPanel):
             "time_window_text": self.time_window_widget.get_current_time_window_text(),
             "primary_item_label_for_naming": self.vitals_combo.currentText().split('(')[0].strip(),
             "cte_join_on_cohort_override": None,
+            
+            # [新增] UI 状态 (保存 Combo 的索引)
+            "_ui_state": {
+                "vitals_combo_index": self.vitals_combo.currentIndex()
+            }
         }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        ui_state = config.get("_ui_state", {})
+        
+        # 1. 恢复生命体征选择
+        # 注意：populate_panel_if_needed 必须先执行过，下拉框里才有内容
+        if "vitals_combo_index" in ui_state:
+            self.vitals_combo.setCurrentIndex(ui_state["vitals_combo_index"])
+        
+        # 2. 恢复聚合和时间
+        self.value_agg_widget.set_selected_methods(config.get("aggregation_methods", {}))
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
+
 
     def clear_panel_state(self):
         if self.vitals_combo.count() > 0:

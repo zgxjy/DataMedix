@@ -1,7 +1,7 @@
 # --- START OF FILE app_config.py ---
 
 # 应用版本信息
-APP_VERSION = "251016" # 版本更新
+APP_VERSION = "251121" # 版本更新
 APP_NAME = "通用医学数据提取与处理工具"
 
 # 默认数据库连接参数 (用户可以在UI中覆盖)

@@ -126,14 +126,13 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
     def get_friendly_source_name(self) -> str:
         return "e-ICU 用药记录 (medication)"
     
+# --- 替换 get_panel_config ---
     def get_panel_config(self) -> dict:
         selected_ids = self.get_selected_item_ids()
         current_time_window = self.time_window_widget.get_current_time_window_text()
         current_event_outputs = self.event_output_widget.get_selected_outputs()
-        # [新增] 获取聚合方法
         aggregation_methods = self.value_agg_widget.get_selected_methods()
 
-        # 如果没有选择任何提取方式，则配置无效
         if not any(current_event_outputs.values()) and not any(aggregation_methods.values()):
             return {}
 
@@ -141,16 +140,45 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
             "source_event_table": "public.medication",
             "item_id_column_in_event_table": "drugname",
             "selected_item_ids": selected_ids,
-            # [核心修改] e-ICU 的值列是 dosage
             "value_column_to_extract": "dosage",  
             "time_column_in_event_table": "drugstartoffset",
-            # [核心修改] 传递聚合方法
             "aggregation_methods": aggregation_methods,
             "event_outputs": current_event_outputs,
             "time_window_text": current_time_window,
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
             "cte_join_on_cohort_override": None,
+            
+            # [新增] UI 状态
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
         }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        ui_state = config.get("_ui_state", {})
+        
+        if "condition_widget" in ui_state:
+            available_fields = [("drugname", "药物名称"), ("routeadmin", "给药途径"), ("frequency", "频率")]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        self.event_output_widget.set_selected_outputs(config.get("event_outputs", {}))
+        self.value_agg_widget.set_selected_methods(config.get("aggregation_methods", {}))
+        
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
 
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems():

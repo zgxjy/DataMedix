@@ -101,27 +101,56 @@ class EicuDiagnosisPanel(BaseSourceConfigPanel):
         
     def get_friendly_source_name(self) -> str:
         return "e-ICU 诊断 (diagnosis)"
-    
+
+# --- 替换 get_panel_config ---
     def get_panel_config(self) -> dict:
         selected_ids = self.get_selected_item_ids()
         current_event_outputs = self.event_output_widget.get_selected_outputs()
 
-        # 如果没有选择任何诊断项或任何输出方式，则配置无效
         if not selected_ids or not any(current_event_outputs.values()):
             return {}
 
         return {
             "source_event_table": "public.diagnosis",
-            "item_id_column_in_event_table": "diagnosisstring",  # 使用诊断字符串作为筛选依据
+            "item_id_column_in_event_table": "diagnosisstring",
             "selected_item_ids": selected_ids,
-            "value_column_to_extract": None,  # 事件类Panel没有数值列
+            "value_column_to_extract": None,
             "time_column_in_event_table": "diagnosisoffset",
-            "aggregation_methods": {},  # 事件类Panel没有数值聚合
+            "aggregation_methods": {},
             "event_outputs": current_event_outputs,
             "time_window_text": self.time_window_widget.get_current_time_window_text(),
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
-            "cte_join_on_cohort_override": None, # 使用标准时间窗口逻辑
+            "cte_join_on_cohort_override": None,
+            
+            # [新增] UI 状态
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
         }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        ui_state = config.get("_ui_state", {})
+        
+        if "condition_widget" in ui_state:
+            available_fields = [("diagnosisstring", "诊断字符串 (包含)"), ("icd9code", "ICD-9编码 (包含)")]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        self.event_output_widget.set_selected_outputs(config.get("event_outputs", {}))
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
 
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems():
