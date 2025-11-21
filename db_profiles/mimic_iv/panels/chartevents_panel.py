@@ -144,7 +144,8 @@ class CharteventsConfigPanel(BaseSourceConfigPanel):
         
         if not any(aggregation_methods_from_widget.values()):
             return {}
-
+        
+        condition_ui_state = self.condition_widget.get_state()
         config = {
             "source_event_table": "mimiciv_icu.chartevents",
             "item_id_column_in_event_table": "itemid",
@@ -156,10 +157,66 @@ class CharteventsConfigPanel(BaseSourceConfigPanel):
             "event_outputs": {},
             "time_window_text": self.time_window_widget.get_current_time_window_text(),
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
-            "cte_join_on_cohort_override": None
+            "cte_join_on_cohort_override": None,
+            # [新增] 保存额外的 UI 状态，用于恢复
+            "_ui_state": {
+                "condition_widget": condition_ui_state,
+                "value_type_index": self.value_type_combo.currentIndex(),
+                # 还需要保存选中项的显示名称，因为加载时 ItemList 是空的
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
+
         }
         return config
-        
+
+    def set_panel_config(self, config: dict):
+            """恢复 Chartevents 面板的配置"""
+            
+            # 1. 恢复筛选条件 UI
+            ui_state = config.get("_ui_state", {})
+            if "condition_widget" in ui_state:
+                # 注意：需要传递当前可用的字段列表，否则下拉框可能为空
+                available_fields = [
+                    ("label", "项目名 (Label)"), ("abbreviation", "缩写 (Abbreviation)"),
+                    ("category", "类别 (Category)"), ("param_type", "参数类型 (Param Type)"),
+                    ("unitname", "单位 (Unit Name)"), ("linksto", "关联表 (Links To)"),("itemid", "ItemID (精确)")
+                ]
+                self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+            # 2. 恢复选中项目列表
+            # 这是一个技巧：我们不需要重新去数据库筛选，直接把保存的 ID 和名称加回列表并选中即可
+            selected_ids = config.get("selected_item_ids", [])
+            selected_display_names = ui_state.get("selected_items_display", [])
+            
+            self.item_list.clear()
+            if selected_ids:
+                for i, item_id in enumerate(selected_ids):
+                    # 尝试匹配显示名称，如果没有则用 ID 代替
+                    display_text = selected_display_names[i] if i < len(selected_display_names) else str(item_id)
+                    
+                    list_item = QListWidgetItem(display_text)
+                    list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+                    self.item_list.addItem(list_item)
+                    list_item.setSelected(True) # 设置为选中状态
+            
+            self._on_item_selection_changed() # 触发标签更新
+
+            # 3. 恢复提取值类型 (数值/文本)
+            if "value_type_index" in ui_state:
+                self.value_type_combo.setCurrentIndex(ui_state["value_type_index"])
+            elif config.get("is_text_extraction"):
+                 # 兼容性处理
+                 self.value_type_combo.setCurrentIndex(1) # 假设 1 是文本
+            
+            # 4. 恢复时间窗口
+            time_window = config.get("time_window_text")
+            if time_window:
+                self.time_window_widget.set_current_time_window_by_text(time_window)
+
+            # 5. 恢复聚合方法
+            aggs = config.get("aggregation_methods", {})
+            self.value_agg_widget.set_selected_methods(aggs)
+
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems():
             first_selected_item_text = self.item_list.selectedItems()[0].text()

@@ -81,16 +81,15 @@ class MedicationConfigPanel(BaseSourceConfigPanel):
         
     def get_friendly_source_name(self) -> str: return "用药 (Prescriptions)"
     
+# --- 替换原有的 get_panel_config ---
     def get_panel_config(self) -> dict:
         condition_sql, condition_params = self.condition_widget.get_condition()
         current_time_window = self.time_window_widget.get_current_time_window_text()
         selected_ids = self.get_selected_item_ids()
         
-        # 同时从两个组件获取配置
         aggregation_methods = self.value_agg_widget.get_selected_methods()
         event_outputs = self.event_output_widget.get_selected_outputs()
 
-        # 只要任意一个有勾选，就认为配置有效
         if not any(aggregation_methods.values()) and not any(event_outputs.values()):
             return {}
 
@@ -108,14 +107,50 @@ class MedicationConfigPanel(BaseSourceConfigPanel):
             "selected_item_ids": selected_ids,
             "value_column_to_extract": "dose_val_rx",
             "time_column_in_event_table": "starttime",
-            "aggregation_methods": aggregation_methods, # 传递新的配置
-            "event_outputs": event_outputs,             # 传递旧的配置
+            "aggregation_methods": aggregation_methods,
+            "event_outputs": event_outputs,
             "time_window_text": current_time_window,
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
             "cte_join_on_cohort_override": join_override_sql,
             "item_filter_conditions": (condition_sql, condition_params),
+            
+            # [新增] UI 状态保存
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
         }
         return config
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        """恢复 Medication 面板配置"""
+        ui_state = config.get("_ui_state", {})
+        
+        # 1. 恢复筛选条件
+        if "condition_widget" in ui_state:
+            available_fields = [("drug", "药物名称 (Drug)")]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        # 2. 恢复选中列表
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        # 3. 恢复输出选项 (事件 + 聚合)
+        self.event_output_widget.set_selected_outputs(config.get("event_outputs", {}))
+        self.value_agg_widget.set_selected_methods(config.get("aggregation_methods", {}))
+
+        # 4. 恢复时间窗口
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
 
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems(): return self.item_list.selectedItems()[0].text()

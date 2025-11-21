@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                           QTextEdit, QComboBox, QGroupBox,
                           QRadioButton, QButtonGroup, QStackedWidget,
                           QLineEdit, QProgressBar, QAbstractItemView, QApplication,
-                          QScrollArea,QSizePolicy)
+                          QScrollArea,QSizePolicy,QFileDialog)
 from PySide6.QtCore import Qt, Signal, Slot, QObject, QThread, QTimer
 from typing import Optional, Dict, Any
 
@@ -14,6 +14,7 @@ import pandas as pd
 import time
 import traceback
 import numpy as np
+import json
 
 from ui_components.base_panel import BaseSourceConfigPanel
 from sql_logic.sql_builder_special import build_special_data_sql
@@ -109,7 +110,6 @@ class MergeSQLWorker(QObject):
                 self.log.emit("关闭数据库连接。")
                 conn_merge.close()
 
-# ... SpecialDataMasterTab 类的剩余部分保持不变 ...
 class SpecialDataMasterTab(QWidget):
     request_preview_signal = Signal(str, str)
 
@@ -128,6 +128,19 @@ class SpecialDataMasterTab(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
+        # --- [新增] 顶部工具栏：配置保存与加载 ---
+        toolbar_layout = QHBoxLayout()
+        self.save_config_btn = QPushButton("💾 保存提取配置")
+        self.save_config_btn.clicked.connect(self.save_configuration)
+        self.load_config_btn = QPushButton("📂 加载提取配置")
+        self.load_config_btn.clicked.connect(self.load_configuration)
+        
+        toolbar_layout.addWidget(self.save_config_btn)
+        toolbar_layout.addWidget(self.load_config_btn)
+        toolbar_layout.addStretch()
+        main_layout.addLayout(toolbar_layout)
+
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         main_layout.addWidget(scroll_area)
@@ -597,3 +610,97 @@ class SpecialDataMasterTab(QWidget):
         else:
             QMessageBox.information(self, "操作取消", "数据合并操作已取消。")
         self.prepare_for_long_operation(False)
+
+# --- [新增] 配置保存与加载逻辑 ---
+
+    def save_configuration(self):
+        """保存当前面板的配置到 JSON 文件"""
+        if not self.db_profile:
+            QMessageBox.warning(self, "无法保存", "请先选择数据库类型。")
+            return
+
+        # 获取当前选中的面板 ID
+        current_id = self.source_selection_group.checkedId()
+        active_panel = self.config_panels.get(current_id)
+        
+        if not active_panel:
+            QMessageBox.warning(self, "无法保存", "请先选择一个数据来源面板。")
+            return
+
+        # 获取面板的具体配置
+        try:
+            panel_config = active_panel.get_panel_config()
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"获取面板配置时出错: {e}")
+            return
+
+        # 构建完整保存数据
+        save_data = {
+            "app_version": "251016", # 对应 app_config.py
+            "db_profile": self.db_profile.get_display_name(),
+            "panel_id": current_id,
+            "panel_name": active_panel.get_friendly_source_name(),
+            "base_new_column_name": self.new_column_name_input.text(),
+            "cohort_table": self.selected_cohort_table, # 记录下来，但加载时不强制要求完全一致
+            "panel_config": panel_config
+        }
+
+        # 弹出文件保存对话框
+        file_path, _ = QFileDialog.getSaveFileName(self, "保存配置", "", "JSON Config (*.json)")
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(save_data, f, indent=4, ensure_ascii=False)
+                QMessageBox.information(self, "成功", f"配置已保存到:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"写入文件失败: {e}")
+
+    def load_configuration(self):
+        """从 JSON 文件加载配置并恢复 UI 状态"""
+        file_path, _ = QFileDialog.getOpenFileName(self, "加载配置", "", "JSON Config (*.json)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # 1. 检查数据库匹配
+            current_profile_name = self.db_profile.get_display_name() if self.db_profile else ""
+            saved_profile_name = data.get("db_profile", "")
+            if current_profile_name != saved_profile_name:
+                QMessageBox.warning(self, "数据库不匹配", 
+                                    f"当前数据库: {current_profile_name}\n"
+                                    f"配置数据库: {saved_profile_name}\n"
+                                    "请先切换到正确的数据库类型。")
+                return
+
+            # 2. 恢复基础输入
+            if "base_new_column_name" in data:
+                self.new_column_name_input.setText(data["base_new_column_name"])
+                self.user_manually_edited_col_name = True # 防止自动覆盖
+
+            # 3. 切换到正确的面板
+            panel_id = data.get("panel_id")
+            if panel_id is not None:
+                button = self.source_selection_group.button(panel_id)
+                if button:
+                    button.setChecked(True)
+                    self._on_source_type_changed(panel_id, True) # 强制触发切换逻辑
+                    QApplication.processEvents() # 等待UI刷新
+            
+            # 4. 调用面板的恢复方法
+            target_panel = self.config_panels.get(panel_id)
+            if target_panel:
+                try:
+                    target_panel.set_panel_config(data.get("panel_config", {}))
+                    QMessageBox.information(self, "加载成功", "配置已成功加载。")
+                except NotImplementedError:
+                    QMessageBox.warning(self, "未实现", f"面板 '{target_panel.get_friendly_source_name()}' 尚未支持配置加载功能。")
+                except Exception as e:
+                    QMessageBox.critical(self, "加载错误", f"恢复面板配置时出错:\n{e}\n{traceback.format_exc()}")
+            
+            self.update_master_action_buttons_state()
+
+        except Exception as e:
+            QMessageBox.critical(self, "文件错误", f"无法读取配置文件: {e}")

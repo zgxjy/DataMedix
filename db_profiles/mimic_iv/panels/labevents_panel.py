@@ -103,6 +103,7 @@ class LabeventsConfigPanel(BaseSourceConfigPanel):
     def get_friendly_source_name(self) -> str:
         return "化验 (Labevents - d_labitems)"
       
+# --- 替换原有的 get_panel_config ---
     def get_panel_config(self) -> dict:
         db_profile = self.get_db_profile()
         if not db_profile: return {}
@@ -122,16 +123,54 @@ class LabeventsConfigPanel(BaseSourceConfigPanel):
             "source_event_table": "mimiciv_hosp.labevents",
             "item_id_column_in_event_table": "itemid",
             "selected_item_ids": selected_ids,
-            "value_column_to_extract": numeric_col, # 固定为数值列
+            "value_column_to_extract": numeric_col,
             "time_column_in_event_table": time_col,
             "aggregation_methods": aggregation_methods_from_widget,
-            "is_text_extraction": False, # 固定为非文本提取
+            "is_text_extraction": False,
             "event_outputs": {},
             "time_window_text": self.time_window_widget.get_current_time_window_text(),
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
-            "cte_join_on_cohort_override": None
+            "cte_join_on_cohort_override": None,
+            
+            # [新增] UI 状态保存
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
         }
         return config
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        """恢复 Labevents 面板配置"""
+        ui_state = config.get("_ui_state", {})
+        
+        # 1. 恢复筛选条件
+        if "condition_widget" in ui_state:
+            available_fields = [
+                ("label", "项目名 (Label)"), ("category", "类别 (Category)"),
+                ("fluid", "体液类型 (Fluid)"), ("itemid", "ItemID (精确)")
+            ]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        # 2. 恢复选中列表
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        # 3. 恢复聚合方法
+        self.value_agg_widget.set_selected_methods(config.get("aggregation_methods", {}))
+
+        # 4. 恢复时间窗口
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
 
     def _get_primary_item_label_for_naming(self) -> Optional[str]:
         if self.item_list.selectedItems():

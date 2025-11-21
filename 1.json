@@ -1,0 +1,9 @@
+{
+    "app_version": "251016",
+    "db_profile": "eICU v2.0",
+    "panel_id": 0,
+    "panel_name": "e-ICU 化验 (lab)",
+    "base_new_column_name": "data_item",
+    "cohort_table": "first_dia_aortic_cohort",
+    "panel_config": {}
+}

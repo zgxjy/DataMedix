@@ -98,6 +98,13 @@ class BaseSourceConfigPanel(QWidget):
                         ids.append(str(data[0]).strip())
             return ids
         return []
+        
+    def set_panel_config(self, config: dict):
+        """
+        [子类必须实现] 将保存的配置字典应用回 UI 控件。
+        用于“加载配置”功能。
+        """
+        raise NotImplementedError("Subclasses must implement set_panel_config")
 
     def __del__(self):
         """确保在面板被销毁时，其独立的数据库连接被关闭。"""

@@ -140,11 +140,46 @@ class PreprocessedNotePanel(BaseSourceConfigPanel):
         if not selected_cols:
             return {}
 
-        # 返回一个特殊结构的配置，让SQL构建器知道这是新模式
         return {
-            "panel_type": "merge_preprocessed",  # <--- 关键标识符
+            "panel_type": "merge_preprocessed", 
             "source_event_table": f"mimiciv_note.{selected_table}",
             "selected_columns": selected_cols,
-            "join_key": "hadm_id", # 固定连接键
-            "primary_item_label_for_naming": selected_table
+            "join_key": "hadm_id",
+            "primary_item_label_for_naming": selected_table,
+            
+            # [新增] UI 状态
+            "_ui_state": {
+                "selected_table_name": selected_table,
+                "selected_columns": selected_cols
+            }
         }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        """恢复 PreprocessedNote 面板配置"""
+        ui_state = config.get("_ui_state", {})
+        target_table = ui_state.get("selected_table_name")
+        target_cols = set(ui_state.get("selected_columns", []))
+        
+        if not target_table: return
+
+        # 1. 尝试在下拉框中选中该表
+        # 注意：populate_panel_if_needed 应该已经在切换面板时被自动调用了
+        # 如果没有被调用 (例如数据库未连接)，这里可能找不到表
+        index = self.table_combo.findText(target_table)
+        if index >= 0:
+            self.table_combo.setCurrentIndex(index)
+            # 强制刷新列表以加载列
+            self._on_table_selected()
+            QApplication.processEvents()
+            
+            # 2. 选中对应的列
+            for i in range(self.column_list.count()):
+                item = self.column_list.item(i)
+                if item.text() in target_cols:
+                    item.setSelected(True)
+                else:
+                    item.setSelected(False)
+        else:
+            # 如果找不到表 (可能需要刷新)，这里只能打印警告或不做处理
+            print(f"Warning: Could not find table '{target_table}' in list to restore config.")

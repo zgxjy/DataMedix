@@ -39,12 +39,69 @@ class DiagnosisConfigPanel(BaseSourceConfigPanel):
         self.time_window_widget.set_options(["住院以前 (既往史)", "整个住院期间"])
         
     def get_friendly_source_name(self): return "诊断 (Diagnoses - d_icd_diagnoses)"
+
+# --- 替换原有的 get_panel_config ---
     def get_panel_config(self) -> dict:
-        condition_sql, condition_params = self.condition_widget.get_condition(); selected_items = self.get_selected_item_ids(); current_time_window = self.time_window_widget.get_current_time_window_text()
+        condition_sql, condition_params = self.condition_widget.get_condition()
+        selected_items = self.get_selected_item_ids()
+        current_time_window = self.time_window_widget.get_current_time_window_text()
+        
         if not any(self.event_output_widget.get_selected_outputs().values()): return {}
+        
         join_override_sql = None
-        if current_time_window == "住院以前 (既往史)": join_override_sql = pgsql.SQL("FROM {event_table} {evt_alias} JOIN {cohort_table} {coh_alias} ON {evt_alias}.subject_id = {coh_alias}.subject_id JOIN mimiciv_hosp.admissions {adm_evt} ON {evt_alias}.hadm_id = {adm_evt}.hadm_id")
-        return {"source_event_table": "mimiciv_hosp.diagnoses_icd", "item_id_column_in_event_table": "icd_code", "selected_item_ids": selected_items, "value_column_to_extract": None, "time_column_in_event_table": None, "aggregation_methods": {}, "event_outputs": self.event_output_widget.get_selected_outputs(), "time_window_text": current_time_window, "primary_item_label_for_naming": self._get_primary_item_label_for_naming(), "cte_join_on_cohort_override": join_override_sql, "item_filter_conditions": (condition_sql, condition_params)}
+        if current_time_window == "住院以前 (既往史)": 
+            # 修正：直接赋值为字符串
+            join_override_sql = "FROM {event_table} {evt_alias} JOIN {cohort_table} {coh_alias} ON {evt_alias}.subject_id = {coh_alias}.subject_id JOIN mimiciv_hosp.admissions {adm_evt} ON {evt_alias}.hadm_id = {adm_evt}.hadm_id"
+            
+        return {
+            "source_event_table": "mimiciv_hosp.diagnoses_icd",
+            "item_id_column_in_event_table": "icd_code",
+            "selected_item_ids": selected_items,
+            "value_column_to_extract": None,
+            "time_column_in_event_table": None,
+            "aggregation_methods": {},
+            "event_outputs": self.event_output_widget.get_selected_outputs(),
+            "time_window_text": current_time_window,
+            "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
+            "cte_join_on_cohort_override": join_override_sql,
+            "item_filter_conditions": None,
+            
+            # [新增] UI 状态
+            "_ui_state": {
+                "condition_widget": self.condition_widget.get_state(),
+                "selected_items_display": [item.text() for item in self.item_list.selectedItems()]
+            }
+        }
+
+    # --- 新增 set_panel_config ---
+    def set_panel_config(self, config: dict):
+        """恢复 Diagnosis 面板配置"""
+        ui_state = config.get("_ui_state", {})
+        
+        # 1. 恢复筛选条件
+        if "condition_widget" in ui_state:
+            available_fields = [("long_title", "诊断描述 (Long Title)"), ("icd_code", "诊断代码 (ICD Code 精确)"), ("icd_version", "ICD 版本 (精确)")]
+            self.condition_widget.set_state(ui_state["condition_widget"], available_fields)
+
+        # 2. 恢复选中列表
+        selected_ids = config.get("selected_item_ids", [])
+        selected_display = ui_state.get("selected_items_display", [])
+        self.item_list.clear()
+        for i, item_id in enumerate(selected_ids):
+            display_text = selected_display[i] if i < len(selected_display) else str(item_id)
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, (str(item_id), display_text))
+            self.item_list.addItem(list_item)
+            list_item.setSelected(True)
+        self._on_item_selection_changed()
+
+        # 3. 恢复输出选项
+        self.event_output_widget.set_selected_outputs(config.get("event_outputs", {}))
+
+        # 4. 恢复时间窗口
+        if "time_window_text" in config:
+            self.time_window_widget.set_current_time_window_by_text(config["time_window_text"])
+
     def _get_primary_item_label_for_naming(self):
         if self.item_list.selectedItems(): return self.item_list.selectedItems()[0].text().split(' (ICD:')[0].strip()
         return None
