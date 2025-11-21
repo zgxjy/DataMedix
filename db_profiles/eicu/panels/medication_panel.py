@@ -1,4 +1,3 @@
-# --- START OF FILE db_profiles/eicu/panels/medication_panel.py ---
 from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton,
                                QListWidget, QListWidgetItem, QAbstractItemView, QTextEdit,
                                QApplication, QGroupBox, QLabel, QMessageBox, QScrollArea, QFrame)
@@ -10,6 +9,8 @@ from typing import Optional
 from ui_components.base_panel import BaseSourceConfigPanel
 from ui_components.conditiongroup import ConditionGroupWidget
 from ui_components.event_output_widget import EventOutputWidget
+# [新增] 导入聚合组件
+from ui_components.value_aggregation_widget import ValueAggregationWidget
 from ui_components.time_window_selector_widget import TimeWindowSelectorWidget
 
 class EicuMedicationPanel(BaseSourceConfigPanel):
@@ -18,7 +19,7 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(10)
 
-        # 1. 筛选项目
+        # --- 1. 筛选部分 (保持不变) ---
         filter_group = QGroupBox("1. 筛选药物 (来自 public.medication)")
         filter_group_layout = QVBoxLayout(filter_group)
         filter_group_layout.setSpacing(8)
@@ -69,13 +70,36 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         filter_group_layout.addWidget(self.selected_items_label)
         panel_layout.addWidget(filter_group)
 
-        # 2. 提取逻辑
+        # --- 2. 提取逻辑 (核心修改) ---
         logic_group = QGroupBox("2. 配置提取逻辑")
         logic_group_layout = QVBoxLayout(logic_group)
 
+        # [修改] 基础事件提取
+        logic_group_layout.addWidget(QLabel("<b>基础事件提取:</b>"))
         self.event_output_widget = EventOutputWidget()
         self.event_output_widget.output_type_changed.connect(self.config_changed_signal.emit)
         logic_group_layout.addWidget(self.event_output_widget)
+
+        # [新增] 分隔符
+        separator_logic = QFrame(); separator_logic.setFrameShape(QFrame.Shape.HLine); separator_logic.setFrameShadow(QFrame.Shadow.Sunken); logic_group_layout.addWidget(separator_logic)
+
+        # [新增] 时间序列提取组件
+        logic_group_layout.addWidget(QLabel("<b>时间序列提取 (JSON格式):</b>"))
+        self.value_agg_widget = ValueAggregationWidget()
+        self.value_agg_widget.aggregation_changed.connect(self.config_changed_signal.emit)
+
+        # 隐藏所有默认的聚合选项 (最大/最小/平均等对于文本剂量无意义)
+        for checkbox in self.value_agg_widget.agg_checkboxes.values():
+            checkbox.setVisible(False)
+        
+        # 动态添加专用的用药时间序列选项
+        self.value_agg_widget.add_custom_aggregation("用药时间序列 (JSON)", "MED_TIMESERIES_JSON", is_checked_by_default=False)
+        
+        # 隐藏全选/全不选按钮
+        self.value_agg_widget.select_all_btn.setVisible(False)
+        self.value_agg_widget.deselect_all_btn.setVisible(False)
+
+        logic_group_layout.addWidget(self.value_agg_widget)
 
         self.time_window_widget = TimeWindowSelectorWidget(label_text="时间窗口 (相对于ICU入院):")
         self.time_window_widget.time_window_changed.connect(lambda: self.config_changed_signal.emit())
@@ -85,7 +109,6 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         self.setLayout(panel_layout)
 
     def populate_panel_if_needed(self):
-        # eICU medication 表没有单独的字典表，所以筛选字段就是表本身的列
         available_fields = [
             ("drugname", "药物名称"),
             ("routeadmin", "给药途径"),
@@ -107,18 +130,22 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         selected_ids = self.get_selected_item_ids()
         current_time_window = self.time_window_widget.get_current_time_window_text()
         current_event_outputs = self.event_output_widget.get_selected_outputs()
+        # [新增] 获取聚合方法
+        aggregation_methods = self.value_agg_widget.get_selected_methods()
 
         # 如果没有选择任何提取方式，则配置无效
-        if not any(current_event_outputs.values()):
+        if not any(current_event_outputs.values()) and not any(aggregation_methods.values()):
             return {}
 
         return {
             "source_event_table": "public.medication",
             "item_id_column_in_event_table": "drugname",
             "selected_item_ids": selected_ids,
-            "value_column_to_extract": None,  # 事件类Panel没有值列
+            # [核心修改] e-ICU 的值列是 dosage
+            "value_column_to_extract": "dosage",  
             "time_column_in_event_table": "drugstartoffset",
-            "aggregation_methods": {},  # 事件类Panel没有聚合方法
+            # [核心修改] 传递聚合方法
+            "aggregation_methods": aggregation_methods,
             "event_outputs": current_event_outputs,
             "time_window_text": current_time_window,
             "primary_item_label_for_naming": self._get_primary_item_label_for_naming(),
@@ -136,6 +163,8 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         self.selected_items_label.setText("已选项目: 0")
         self.filter_sql_preview_textedit.clear()
         self.event_output_widget.clear_selections()
+        # [新增] 清除聚合选项
+        self.value_agg_widget.clear_selections()
         self.time_window_widget.clear_selection()
 
     def _on_item_selection_changed(self):
@@ -164,7 +193,6 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
             return
             
         try:
-            # 直接从 medication 表中查询不重复的药物名称
             query_template_obj = pgsql.SQL("SELECT DISTINCT drugname FROM public.medication WHERE {cond} ORDER BY drugname LIMIT 500").format(
                 cond=pgsql.SQL(condition_sql_template)
             )
@@ -179,7 +207,7 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
             if items:
                 for item_tuple in items:
                     drug_name = str(item_tuple[0]) if item_tuple[0] is not None else "Unknown Drug"
-                    if not drug_name: continue # 跳过空字符串
+                    if not drug_name: continue 
                     list_item = QListWidgetItem(drug_name)
                     list_item.setData(Qt.ItemDataRole.UserRole, (drug_name, drug_name))
                     self.item_list.addItem(list_item)
@@ -198,5 +226,3 @@ class EicuMedicationPanel(BaseSourceConfigPanel):
         has_valid_conditions_in_panel = self.condition_widget.has_valid_input()
         can_filter = general_config_ok and has_valid_conditions_in_panel
         self.filter_items_btn.setEnabled(can_filter)
-
-# --- END OF FILE db_profiles/eicu/panels/medication_panel.py ---

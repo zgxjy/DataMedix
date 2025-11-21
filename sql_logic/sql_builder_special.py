@@ -1,4 +1,3 @@
-# --- START OF FILE sql_logic/sql_builder_special.py ---
 import psycopg2
 import psycopg2.sql as psql
 import time 
@@ -168,11 +167,21 @@ def build_special_data_sql(
     if time_col_for_window:
         select_event_cols_defs.append(psql.SQL("{}.{} AS event_time").format(event_alias, psql.Identifier(time_col_for_window)))
 
+    # --- [修复] 针对 MED_TIMESERIES_JSON 的列映射 ---
     if any(m == "MED_TIMESERIES_JSON" for m, s in aggregation_methods.items() if s):
-        select_event_cols_defs.append(psql.SQL("{}.stoptime").format(event_alias))
-        select_event_cols_defs.append(psql.SQL("{}.dose_unit_rx").format(event_alias))
-        select_event_cols_defs.append(psql.SQL("{}.form_unit_disp").format(event_alias))
+        if _is_eicu_profile(db_profile):
+            # e-ICU 映射逻辑
+            select_event_cols_defs.append(psql.SQL("{}.drugstopoffset AS stoptime").format(event_alias))
+            select_event_cols_defs.append(psql.SQL("NULL AS dose_unit_rx"))
+            select_event_cols_defs.append(psql.SQL("{}.routeadmin AS form_unit_disp").format(event_alias))
+        else:
+            # MIMIC-IV 默认逻辑
+            select_event_cols_defs.append(psql.SQL("{}.stoptime").format(event_alias))
+            select_event_cols_defs.append(psql.SQL("{}.dose_unit_rx").format(event_alias))
+            select_event_cols_defs.append(psql.SQL("{}.form_unit_disp").format(event_alias))
+    # -------------------------------------------
 
+    # [关键修复] filtered_events_cte_sql 必须在 if 块之外定义
     filtered_events_cte_sql = psql.SQL("FilteredEvents AS (SELECT {select_list} {from_join} WHERE {conditions})").format(
         select_list=psql.SQL(', ').join(select_event_cols_defs),
         from_join=from_join_clause_for_cte,
@@ -249,10 +258,7 @@ def build_special_data_sql(
             event_value_expression = psql.SQL("CAST(NULLIF(event_value, '') AS NUMERIC)")
 
         if method_key == "MED_TIMESERIES_JSON":
-            # --- BUG FIX STARTS HERE ---
-            # The error occurred because we were trying to reference the `evt` alias
-            # inside a query that was selecting from `FilteredEvents`.
-            # The columns are now direct columns of `FilteredEvents`, so we should reference them without an alias.
+            # 这里的列直接引用 FilteredEvents CTE 中的列名，不再加别名 evt
             sql_expr = psql.SQL(agg_template_or_tuple).format(
                 val_col=psql.Identifier('event_value'),
                 time_col=psql.Identifier('event_time'),
@@ -260,7 +266,6 @@ def build_special_data_sql(
                 unit_col=psql.Identifier('dose_unit_rx'),
                 form_col=psql.Identifier('form_unit_disp')
             )
-            # --- BUG FIX ENDS HERE ---
         elif isinstance(agg_template_or_tuple, tuple):
             sql_template, params = agg_template_or_tuple
             sql_expr = psql.SQL("(ARRAY_AGG({}))[1]").format(
