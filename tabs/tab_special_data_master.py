@@ -310,8 +310,8 @@ class SpecialDataMasterTab(QWidget):
         time_window_text = panel_config.get("time_window_text", "")
         if time_window_text:
             time_map = {
-                "ICU入住24小时内": "icu24h", "ICU入住48小时内": "icu48h",
-                "整个ICU期间": "icuall", "整个住院期间": "hospall",
+                "ICU24小时内": "icu24h", "ICU48小时内": "icu48h","整个ICU期间": "icuall", 
+                "住院24小时内": "hosp24h", "住院48小时内": "hosp48h","整个住院期间": "hospall",
                 "住院以前 (既往史)": "prior",  
             }
             time_code = time_map.get(time_window_text, sanitize_name_part(time_window_text.split(" ")[0]))

@@ -123,7 +123,8 @@ class CharteventsConfigPanel(BaseSourceConfigPanel):
         self.condition_widget.set_available_search_fields(available_fields)
         
         value_agg_time_window_options = [
-            "ICU入住24小时内", "ICU入住48小时内", "整个ICU期间", "整个住院期间"
+            "ICU24小时内", "ICU48小时内", "整个ICU期间", 
+            "住院24小时内", "住院48小时内","整个住院期间"
         ]
         self.time_window_widget.set_options(value_agg_time_window_options)
 

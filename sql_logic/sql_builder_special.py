@@ -71,10 +71,18 @@ class MimicIVStrategy(BaseSqlBuilderStrategy):
         start_hosp = psql.SQL("CAST({} AS DATE)").format(cohort_admittime) if is_date_col else cohort_admittime
         end_hosp = psql.SQL("CAST({} AS DATE)").format(cohort_dischtime) if is_date_col else cohort_dischtime
 
-        if "24小时" in window_text:
+        # 1. 处理 "住院24小时内" (基于 Hospital Admission Time)
+        if "住院24小时" in window_text:
+            return psql.SQL("{evt}.{time} BETWEEN {start} AND ({start} + interval '24 hours')").format(
+                evt=self.evt, time=time_col, start=cohort_admittime)       # 逻辑：事件时间 在 [入院时间, 入院时间 + 24小时] 之间            
+        # 2. 处理 "住院48小时内"
+        elif "住院48小时" in window_text:
+            return psql.SQL("{evt}.{time} BETWEEN {start} AND ({start} + interval '48 hours')").format(
+                evt=self.evt, time=time_col, start=cohort_admittime)
+        elif "ICU24小时" in window_text:
             return psql.SQL("{evt}.{time} BETWEEN {start} AND ({start} + interval '24 hours')").format(
                 evt=self.evt, time=time_col, start=cohort_icu_intime)
-        elif "48小时" in window_text:
+        elif "ICU48小时" in window_text:
             return psql.SQL("{evt}.{time} BETWEEN {start} AND ({start} + interval '48 hours')").format(
                 evt=self.evt, time=time_col, start=cohort_icu_intime)
         elif "整个ICU期间" in window_text:
